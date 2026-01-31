@@ -1,159 +1,221 @@
-# PS 风格选区自动收缩到图层范围（Selection Clamp）设计文档
+# Photoshop 风格矩形选区 Delete / Backspace 行为设计文档
 
-## ✅ 实现状态：已完成
+## 1. 功能目标
 
-本文档描述的所有功能已经完整实现并集成到项目中。
+实现与 Photoshop 一致的选区删除行为：
 
-### 实现文件清单：
-- ✅ `src/core/SelectionMath.h` - 选区数学库（交集计算、越界判断）
-- ✅ `src/core/SelectionMath.cpp` - 核心算法实现
-- ✅ `src/core/SelectionSystem.h` - 选区系统控制器
-- ✅ `src/core/SelectionSystem.cpp` - 选区渲染（支持自动收缩）
-- ✅ `src/core/OutOfBoundsRenderer.h` - 越界警告线渲染器
-- ✅ `src/core/OutOfBoundsRenderer.cpp` - 粉色警告线实现
-- ✅ `src/ui/PreviewPanel.cpp` - 集成到画布渲染流程
-
-### 核心功能验证：
-1. ✅ 用户可以自由拖拽鼠标创建选区（不限制拖拽范围）
-2. ✅ 最终显示的选区自动裁剪到图层范围内（FinalSelection = RawSelection ∩ LayerRect）
-3. ✅ 选区越界时显示粉色警告线（在图层边界上）
-4. ✅ 选区完全在图层外时不显示（交集为空）
+- 用户使用【矩形选区工具】选中区域
+- 按下 `Delete` 或 `Backspace`
+- 根据当前图层类型与状态，产生不同结果
+- 删除行为 **仅作用于选区范围内**
+- 不影响选区外像素
 
 ---
 
-## 1. 功能说明
+## 2. Delete / Backspace 的统一定义
 
-实现与 Photoshop 一致的矩形选区行为：
+在 Photoshop 中：
 
-- 用户可自由拖拽鼠标创建选区
-- 拖拽范围允许超过图层边界
-- **最终显示的选区永远不会超出图层有效区域**
-- 当选区超过图层时，自动缩减到图层大小
-- 不限制用户操作，仅限制选区结果
+- `Delete` 与 `Backspace`
+- 在矩形选区存在时
+- **行为完全一致**
 
-核心定义：
-
-> 最终选区 = 用户拖拽选区 ∩ 图层区域
+本文档中统一称为：**Delete 操作**
 
 ---
 
-## 2. 设计原则
+## 3. Delete 行为的核心规则（总览）
 
-### 2.1 不限制用户拖拽行为
-- 不在鼠标事件阶段判断是否越界
-- 鼠标可以拖到任意位置
-- 不提前阻断拖拽或回弹鼠标
+Delete 的最终效果，取决于三个条件：
 
-### 2.2 强制裁剪最终选区
-- 所有边界逻辑只存在于 **选区计算阶段**
-- 绘制阶段只使用裁剪后的选区
-- 原始拖拽矩形不直接参与绘制
+1. 是否存在有效选区
+2. 当前图层类型
+3. 图层是否允许透明
+
+核心结论一句话版：
+
+> **能透明 → 变透明  
+> 不能透明 → 填充背景色**
 
 ---
 
-## 3. 坐标与数据定义
+## 4. 行为前置条件判断
 
-### 3.1 图层矩形（Layer Rect）
+### 4.1 是否存在有效选区
 
 ```text
-layerLeft
-layerTop
-layerRight  = layerLeft + layerWidth
-layerBottom = layerTop  + layerHeight
-表示图层在画布 / 世界坐标中的真实可编辑范围。
+if (selection == null or selection.area == 0)
+PS 行为：不执行任何操作
 
-3.2 原始选区矩形（Raw Selection）
-由鼠标按下点与当前点计算得到，可能越界。
+不删除整层
 
-rawLeft   = min(start.x, current.x)
-rawTop    = min(start.y, current.y)
-rawRight  = max(start.x, current.x)
-rawBottom = max(start.y, current.y)
-4. 核心算法：选区自动收缩（矩形交集）
-4.1 数学模型
-FinalSelection = RawSelection ∩ LayerRect
-即：两个矩形的交集运算。
+不弹窗
 
-4.2 计算方式（核心逻辑）
-finalLeft   = max(rawLeft,   layerLeft);
-finalTop    = max(rawTop,    layerTop);
-finalRight  = min(rawRight,  layerRight);
-finalBottom = min(rawBottom, layerBottom);
-约束说明：
+不报错
 
-左 / 上 / 右 / 下逻辑必须完全对称
+4.2 选区与图层关系
+Delete 只作用于选区 ∩ 图层区域
 
-不对右或下边界做 -1、padding 等修正
+超出图层部分自动忽略
 
-不区分拖拽方向
+不会修改图层尺寸
 
-4.3 无效选区处理
-当选区完全在图层外或无面积时：
+5. 不同图层类型的 Delete 行为
+5.1 普通图层（支持透明）
+条件
+非背景层
 
-if (finalRight <= finalLeft || finalBottom <= finalTop) {
-    // 选区无效，不绘制
-}
-行为与 PS 保持一致：
-不显示选区框。
+未锁定透明像素
 
-5. 绘制规则
-只允许绘制 FinalSelection
+支持 Alpha 通道
 
-禁止绘制原始拖拽矩形
+Delete 行为
+选区内像素 → Alpha = 0（完全透明）
+视觉效果
+出现棋盘格
 
-禁止在绘制阶段再进行边界判断
+图层内容被“挖空”
 
-DrawSelectionRect(finalSelection);
-6. 交互行为对照表
-用户操作情况	最终选区表现
-完全在图层内拖拽	正常选区
-左 / 上越界	自动贴合图层左 / 上
-右 / 下越界	自动贴合图层右 / 下
-完全在图层外	不显示选区
-继续拖拽	选区大小保持不变
-7. 常见错误与规避
-常见错误
-在鼠标事件中限制坐标
+下方图层可见
 
-使用 width / height 替代 right / bottom
+这是 PS 中最常见的 Delete 行为
+5.2 背景层（不支持透明）
+条件
+图层类型为 Background
 
-右 / 下边界提前判定越界
+或透明通道被禁用
 
-int / float 混用导致提前裁剪
+Delete 行为
+选区内像素 → 填充当前背景色
+默认：
 
-左右 / 上下逻辑不对称
+白色（RGB 255,255,255）
 
-正确做法
-鼠标系统：完全自由
+PS 特点
+不会变透明
 
-选区系统：只做矩形交集
+不会挖空
 
-绘制系统：只认最终结果
+始终保持不透明
 
-8. 推荐代码结构
-Rect CalcRawSelection(Vec2 start, Vec2 current);
-Rect IntersectRect(Rect a, Rect b);
+5.3 普通图层 +「锁定透明像素」
+条件
+图层支持透明
 
-Rect selection = IntersectRect(
-    CalcRawSelection(dragStart, dragCurrent),
-    layerRect
-);
-该结构可复用于：
+但启用了「Lock Transparency」
 
-矩形选区
+Delete 行为
+不产生任何变化
+PS 行为
+Delete 被忽略
 
-裁剪工具
+不提示错误
 
-ROI 区域
+不修改像素
 
-遮罩系统
+6. 选区删除的精确作用范围
+6.1 实际删除区域计算
+DeleteArea = Selection ∩ LayerRect
+Delete 永远不会超出图层边界
 
-后续套索 / 椭圆选区
+Delete 不会改变图层尺寸
 
-9. 总结
-PS 风格选区的核心不是限制用户操作，
-而是对最终选区结果进行强制裁剪。
+Delete 不会影响选区外内容
 
-只要严格遵循
-“选区 = 拖拽结果 ∩ 图层区域”
-即可实现稳定、专业、无边界 Bug 的选区系统。
+7. Delete 像素级实现规范
+7.1 普通图层（可透明）
+for pixel in DeleteArea:
+    pixel.rgba = (0, 0, 0, 0)
+说明：
+
+RGB 值可清零或保留
+
+Alpha 必须为 0
+
+7.2 背景层（不可透明）
+for pixel in DeleteArea:
+    pixel.rgb = backgroundColor
+    pixel.alpha = 1.0
+7.3 锁定透明像素
+// 不执行任何写操作
+8. 选区与 Delete 的交互细节（PS 级）
+8.1 Delete 不会清除选区
+Delete 后选区仍然存在
+
+用户可继续：
+
+移动选区
+
+填充
+
+反选
+
+再次 Delete
+
+8.2 多次 Delete 行为
+第一次 Delete → 清空像素
+
+再次 Delete → 无变化
+
+不产生累计副作用
+
+8.3 Delete 与 Undo
+Delete 是一次 完整的可撤销操作
+
+Undo 恢复：
+
+像素数据
+
+Alpha 通道
+
+不恢复选区状态（PS 默认）
+
+9. 推荐状态流程（实现用）
+KeyDown(Delete)
+ ├─ 无选区 → return
+ ├─ 图层锁定 → return
+ ├─ 计算 DeleteArea
+ ├─ 判断图层类型
+ ├─ 执行像素修改
+ └─ Push Undo Record
+10. 常见错误实现（❌）
+Delete 时删除整层
+
+Delete 后清空选区
+
+Delete 改变图层尺寸
+
+对背景层错误设置透明
+
+锁定透明像素仍可删除
+
+这些都 不符合 Photoshop 行为
+
+11. 设计总结
+Photoshop 的 Delete
+本质是一次 受选区约束的像素修改操作
+
+不是：
+
+图层操作
+
+选区操作
+
+几何裁剪
+
+而是：
+
+在选区内，按图层规则修改像素
+
+12. 可扩展方向（后续）
+该设计可自然扩展到：
+
+Edit → Clear
+
+填充（Fill）
+
+内容识别填充
+
+橡皮擦工具
+
+快速蒙版删除

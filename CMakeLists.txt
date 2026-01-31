@@ -69,6 +69,8 @@ set(PROJECT_SOURCES
     ${CMAKE_SOURCE_DIR}/src/core/SelectionMath.h
     ${CMAKE_SOURCE_DIR}/src/core/OutOfBoundsRenderer.cpp
     ${CMAKE_SOURCE_DIR}/src/core/OutOfBoundsRenderer.h
+    ${CMAKE_SOURCE_DIR}/src/core/ImageHistory.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/ImageHistory.h
     ${CMAKE_SOURCE_DIR}/src/core/Types.h
     ${CMAKE_SOURCE_DIR}/src/task/BatchProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/task/BatchProcessor.h

@@ -6,8 +6,10 @@
 #include "core/SelectionSystem.h"
 #include "core/SelectionMath.h"
 #include "core/OutOfBoundsRenderer.h"
+#include "core/ImageHistory.h"
 #include <imgui.h>
 #include <vector>
+#include <map>
 
 /**
  * @brief 预览面板
@@ -74,6 +76,7 @@ private:
 private:
     ImageData m_CurrentImage;
     std::string m_CurrentImagePath;
+    bool m_ImageModified = false;  // ✅ 标记图像是否被修改过
     
     // OpenGL 纹理
     unsigned int m_TextureID = 0;
@@ -127,6 +130,17 @@ private:
     bool m_HasSelection = false;                        // 是否有活动选区
     OutOfBoundsRenderer m_OutOfBoundsRenderer;          // 选区越界警告线渲染器
     
+    // 图像历史记录（撤销/重做）
+    ImageHistory m_ImageHistory;                        // 历史记录管理器
+    
+    // ✅ 图片缓存系统（保存每张图片的修改状态和历史记录）
+    struct ImageCache {
+        ImageData imageData;
+        bool modified = false;
+        ImageHistory history;  // ✅ 保存每张图片的历史记录
+    };
+    std::map<std::string, ImageCache> m_ImageCache;  // 路径 -> 缓存数据
+    
     // 变换控制点拖拽状态
     enum class TransformHandle {
         None = -1,
@@ -160,6 +174,31 @@ private:
     // 选区相关辅助方法
     ImVec2 ScreenToCanvas(const ImVec2& screenPos, const ProcessConfig& config) const;  // 屏幕坐标转画布逻辑坐标
     ImVec2 CanvasToScreen(const ImVec2& canvasPos, const ProcessConfig& config) const;  // 画布逻辑坐标转屏幕坐标
+    
+    /**
+     * @brief 删除选区内容（PS 风格）
+     * @param config 处理配置
+     * @return 成功返回 true
+     * 
+     * 行为：
+     * - 如果没有选区，不执行任何操作
+     * - 将选区内的像素 Alpha 设置为 0（透明）
+     * - 不影响选区外的像素
+     * - 删除后选区仍然保留
+     */
+    bool DeleteSelectionContent(const ProcessConfig& config);
+    
+    /**
+     * @brief 撤销上一次操作（Ctrl+Z）
+     * @return 成功返回 true
+     */
+    bool Undo();
+    
+    /**
+     * @brief 重做下一次操作（Ctrl+Shift+Z）
+     * @return 成功返回 true
+     */
+    bool Redo();
     
     // 当前图片索引（用于跟踪切换）
     int m_LastImageIndex = -1;

@@ -79,6 +79,28 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
         }
     }
     
+    // ✅ Delete / Backspace 删除选区内容（PS 风格）
+    // 只在选区模式下且有活动选区时生效
+    if (m_SelectionMode && m_SelectionSystem.HasActiveSelection()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || 
+            ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+            printf("\n[Shortcut] Delete/Backspace pressed, deleting selection content...\n");
+            DeleteSelectionContent(config);
+        }
+    }
+    
+    // ✅ Ctrl+Z 撤销（全局快捷键）
+    if (ctrlPressed && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !io.KeyShift) {
+        printf("\n[Shortcut] Ctrl+Z pressed, undoing...\n");
+        Undo();
+    }
+    
+    // ✅ Ctrl+Shift+Z 重做（全局快捷键）
+    if (ctrlPressed && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        printf("\n[Shortcut] Ctrl+Shift+Z pressed, redoing...\n");
+        Redo();
+    }
+    
     // 变换模式下的快捷键
     if (m_TransformMode) {
         // Enter 确认变换
@@ -968,6 +990,41 @@ bool PreviewPanel::LoadCurrentImage(const std::string& filePath) {
             return false;
         }
 
+        // ✅ 1. 先保存当前图片到缓存（如果有修改或有历史记录）
+        if (!m_CurrentImagePath.empty() && m_CurrentImage.IsValid()) {
+            ImageCache cache;
+            cache.imageData = m_CurrentImage;
+            cache.modified = m_ImageModified;
+            cache.history = m_ImageHistory;  // ✅ 保存历史记录
+            m_ImageCache[m_CurrentImagePath] = cache;
+            printf("[LoadImage] Saved image to cache: %s (modified=%d, history_count=%zu)\n", 
+                   m_CurrentImagePath.c_str(), m_ImageModified, m_ImageHistory.GetHistoryCount());
+        }
+
+        // ✅ 2. 检查缓存中是否有这张图片
+        auto it = m_ImageCache.find(filePath);
+        if (it != m_ImageCache.end()) {
+            // 从缓存加载
+            printf("[LoadImage] Loading from cache: %s (modified=%d, history_count=%zu)\n", 
+                   filePath.c_str(), it->second.modified, it->second.history.GetHistoryCount());
+            
+            m_CurrentImage = it->second.imageData;
+            m_CurrentImagePath = filePath;
+            m_ImageModified = it->second.modified;
+            m_ImageHistory = it->second.history;  // ✅ 恢复历史记录
+            
+            // 更新纹理
+            if (!CreateTexture(m_CurrentImage)) {
+                std::cerr << "Failed to create texture from cache" << std::endl;
+                return false;
+            }
+            
+            return true;
+        }
+
+        // ✅ 3. 缓存中没有，从磁盘加载
+        printf("[LoadImage] Loading from disk: %s\n", filePath.c_str());
+        
         ImageData tempImage;
         if (!ImageLoader::Load(filePath, tempImage)) {
             std::cerr << "Failed to load image: " << filePath << std::endl;
@@ -983,6 +1040,12 @@ bool PreviewPanel::LoadCurrentImage(const std::string& filePath) {
         // 成功后才更新
         m_CurrentImage = tempImage;
         m_CurrentImagePath = filePath;
+        m_ImageModified = false;  // 新加载的图片未修改
+        
+        // 清空历史记录（新加载的图片）
+        m_ImageHistory.Clear();
+        printf("[LoadImage] Loaded new image from disk, history cleared.\n");
+        
         return true;
     } catch (const std::exception& e) {
         std::cerr << "Exception in LoadCurrentImage: " << e.what() << std::endl;
@@ -1457,5 +1520,211 @@ void PreviewPanel::HandleTransformInput(const ImVec2& imageMin, const ImVec2& im
             }
         }
     }
+}
+
+bool PreviewPanel::DeleteSelectionContent(const ProcessConfig& config) {
+    // ✅ PS 风格：Delete / Backspace 删除选区内容
+    
+    // 1. 检查是否有有效选区
+    if (!m_SelectionSystem.HasActiveSelection()) {
+        printf("[DeleteSelection] No active selection, operation ignored.\n");
+        return false;
+    }
+    
+    // 2. 检查是否有有效的图像数据
+    if (!m_CurrentImage.IsValid() || m_CurrentImage.pixels.empty()) {
+        printf("[DeleteSelection] No valid image data.\n");
+        return false;
+    }
+    
+    // ✅ 3. 在执行删除前保存当前图像状态到历史记录
+    m_ImageHistory.Push(m_CurrentImage, "Delete Selection");
+    
+    // 4. 获取选区（画布逻辑坐标）
+    SelectionRect selection = m_SelectionSystem.GetSelection();
+    SelectionRect norm = selection.GetNormalized();
+    
+    printf("\n=== Delete Selection Content ===\n");
+    printf("Selection bounds (canvas logical coords):\n");
+    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n", 
+           norm.x, norm.y, norm.width, norm.height);
+    
+    // 4. 计算删除区域（选区 ∩ 图像边界）
+    // ✅ 关键修复：使用图像实际尺寸，而不是画布尺寸
+    int deleteLeft = std::max(0, static_cast<int>(std::floor(norm.x)));
+    int deleteTop = std::max(0, static_cast<int>(std::floor(norm.y)));
+    int deleteRight = std::min(m_CurrentImage.width, static_cast<int>(std::ceil(norm.x + norm.width)));
+    int deleteBottom = std::min(m_CurrentImage.height, static_cast<int>(std::ceil(norm.y + norm.height)));
+    
+    printf("Image size: %d x %d\n", m_CurrentImage.width, m_CurrentImage.height);
+    printf("Canvas size: %d x %d\n", config.canvas.width, config.canvas.height);
+    
+    // 检查是否有有效的删除区域
+    if (deleteRight <= deleteLeft || deleteBottom <= deleteTop) {
+        printf("[DeleteSelection] Selection is outside image bounds.\n");
+        return false;
+    }
+    
+    printf("Delete area (pixel coords):\n");
+    printf("  left=%d, top=%d, right=%d, bottom=%d\n", 
+           deleteLeft, deleteTop, deleteRight, deleteBottom);
+    printf("  width=%d, height=%d\n", 
+           deleteRight - deleteLeft, deleteBottom - deleteTop);
+    
+    // 5. 确保图像有 Alpha 通道
+    int channels = m_CurrentImage.channels;
+    if (channels < 4) {
+        printf("[DeleteSelection] Converting image to RGBA format...\n");
+        
+        // 转换为 RGBA 格式
+        std::vector<uint8_t> newPixels;
+        newPixels.reserve(m_CurrentImage.width * m_CurrentImage.height * 4);
+        
+        for (int y = 0; y < m_CurrentImage.height; y++) {
+            for (int x = 0; x < m_CurrentImage.width; x++) {
+                int srcIdx = (y * m_CurrentImage.width + x) * channels;
+                
+                if (channels == 3) {
+                    // RGB -> RGBA
+                    newPixels.push_back(m_CurrentImage.pixels[srcIdx + 0]); // R
+                    newPixels.push_back(m_CurrentImage.pixels[srcIdx + 1]); // G
+                    newPixels.push_back(m_CurrentImage.pixels[srcIdx + 2]); // B
+                    newPixels.push_back(255); // A (不透明)
+                } else if (channels == 1) {
+                    // Grayscale -> RGBA
+                    uint8_t gray = m_CurrentImage.pixels[srcIdx];
+                    newPixels.push_back(gray); // R
+                    newPixels.push_back(gray); // G
+                    newPixels.push_back(gray); // B
+                    newPixels.push_back(255);  // A (不透明)
+                }
+            }
+        }
+        
+        m_CurrentImage.pixels = std::move(newPixels);
+        m_CurrentImage.channels = 4;
+        channels = 4;
+    }
+    
+    // 6. 删除选区内的像素（设置 Alpha = 0）
+    int pixelsDeleted = 0;
+    for (int y = deleteTop; y < deleteBottom; y++) {
+        for (int x = deleteLeft; x < deleteRight; x++) {
+            // 计算像素索引
+            int pixelIdx = (y * m_CurrentImage.width + x) * channels;
+            
+            // ✅ PS 行为：将 Alpha 设置为 0（完全透明）
+            // RGB 值保留（虽然不可见，但符合 PS 行为）
+            m_CurrentImage.pixels[pixelIdx + 3] = 0;  // Alpha = 0
+            pixelsDeleted++;
+        }
+    }
+    
+    printf("Deleted %d pixels (set Alpha=0)\n", pixelsDeleted);
+    
+    // 7. 更新纹理
+    if (!CreateTexture(m_CurrentImage)) {
+        printf("[DeleteSelection] Failed to update texture.\n");
+        return false;
+    }
+    
+    // ✅ 8. 标记图像为已修改并同步缓存
+    m_ImageModified = true;
+    
+    // ✅ 同步更新缓存（确保缓存与当前状态一致）
+    if (!m_CurrentImagePath.empty()) {
+        ImageCache cache;
+        cache.imageData = m_CurrentImage;
+        cache.modified = true;
+        cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        m_ImageCache[m_CurrentImagePath] = cache;
+        printf("Cache updated for: %s\n", m_CurrentImagePath.c_str());
+    }
+    
+    printf("Texture updated successfully.\n");
+    printf("Image marked as modified.\n");
+    printf("================================\n\n");
+    
+    return true;
+}
+
+bool PreviewPanel::Undo() {
+    ImageData restoredImage;
+    std::string description;
+    
+    if (!m_ImageHistory.Undo(restoredImage, description)) {
+        printf("[Undo] Cannot undo: no history available\n");
+        return false;
+    }
+    
+    printf("\n=== Undo Operation ===\n");
+    printf("Restoring: '%s'\n", description.c_str());
+    
+    // 恢复图像数据
+    m_CurrentImage = restoredImage;
+    
+    // 更新纹理
+    if (!CreateTexture(m_CurrentImage)) {
+        printf("[Undo] Failed to update texture.\n");
+        return false;
+    }
+    
+    // ✅ 标记图像为已修改（撤销也是一种修改）
+    m_ImageModified = true;
+    
+    // ✅ 同步更新缓存（确保缓存与当前状态一致）
+    if (!m_CurrentImagePath.empty()) {
+        ImageCache cache;
+        cache.imageData = m_CurrentImage;
+        cache.modified = true;
+        cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        m_ImageCache[m_CurrentImagePath] = cache;
+        printf("[Undo] Updated cache for: %s\n", m_CurrentImagePath.c_str());
+    }
+    
+    printf("Undo completed successfully.\n");
+    printf("======================\n\n");
+    
+    return true;
+}
+
+bool PreviewPanel::Redo() {
+    ImageData restoredImage;
+    std::string description;
+    
+    if (!m_ImageHistory.Redo(restoredImage, description)) {
+        printf("[Redo] Cannot redo: already at latest state\n");
+        return false;
+    }
+    
+    printf("\n=== Redo Operation ===\n");
+    printf("Restoring: '%s'\n", description.c_str());
+    
+    // 恢复图像数据
+    m_CurrentImage = restoredImage;
+    
+    // 更新纹理
+    if (!CreateTexture(m_CurrentImage)) {
+        printf("[Redo] Failed to update texture.\n");
+        return false;
+    }
+    
+    // ✅ 标记图像为已修改（重做也是一种修改）
+    m_ImageModified = true;
+    
+    // ✅ 同步更新缓存（确保缓存与当前状态一致）
+    if (!m_CurrentImagePath.empty()) {
+        ImageCache cache;
+        cache.imageData = m_CurrentImage;
+        cache.modified = true;
+        cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        m_ImageCache[m_CurrentImagePath] = cache;
+        printf("[Redo] Updated cache for: %s\n", m_CurrentImagePath.c_str());
+    }
+    
+    printf("Redo completed successfully.\n");
+    printf("======================\n\n");
+    
+    return true;
 }
 
