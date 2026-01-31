@@ -1,0 +1,59 @@
+# Build directories
+build/
+build_cmake/
+build_new/
+build_release/
+out/
+
+# Compiled executables
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+*.ilk
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.ninja
+build.ninja
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# Logs
+*.log
+*.txt.log
+
+# ImGui config
+imgui.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*~
+
+# Debug output files
+debug_output.txt
+drawing_error.txt
+drawing_output.txt
+output*.txt
+COMPILE_REPORT_OUTPUT.txt
+
+# Test files
+final_test.txt
+cmake_config.log
+
+# Release packages (optional - uncomment if you don't want to track releases)
+# 发布版本/
+# 鍙戝竧鐗堟湰/

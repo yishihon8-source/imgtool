@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "编译项目 (Release)",
+			"type": "shell",
+			"command": "cd f:\\oneDrive\\Desktop\\ps-cpp && if not exist build_release mkdir build_release && cd build_release && cmake -G \"Visual Studio 17 2022\" -DCMAKE_BUILD_TYPE=Release .. && cmake --build . --config Release",
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": "build"
+		}
+	]
+}
