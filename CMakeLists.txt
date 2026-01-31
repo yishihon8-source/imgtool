@@ -130,9 +130,10 @@ if(WIN32)
         NOMINMAX
     )
     # 隐藏控制台窗口（所有模式）
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-        WIN32_EXECUTABLE TRUE
-    )
+    # ✅ 临时注释以便调试输出到控制台
+    # set_target_properties(${PROJECT_NAME} PROPERTIES
+    #     WIN32_EXECUTABLE TRUE
+    # )
     
     # 添加应用程序图标
     if(EXISTS ${CMAKE_SOURCE_DIR}/resources/app.rc)

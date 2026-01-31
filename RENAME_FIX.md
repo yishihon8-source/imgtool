@@ -1,5 +1,26 @@
 # PS 风格选区自动收缩到图层范围（Selection Clamp）设计文档
 
+## ✅ 实现状态：已完成
+
+本文档描述的所有功能已经完整实现并集成到项目中。
+
+### 实现文件清单：
+- ✅ `src/core/SelectionMath.h` - 选区数学库（交集计算、越界判断）
+- ✅ `src/core/SelectionMath.cpp` - 核心算法实现
+- ✅ `src/core/SelectionSystem.h` - 选区系统控制器
+- ✅ `src/core/SelectionSystem.cpp` - 选区渲染（支持自动收缩）
+- ✅ `src/core/OutOfBoundsRenderer.h` - 越界警告线渲染器
+- ✅ `src/core/OutOfBoundsRenderer.cpp` - 粉色警告线实现
+- ✅ `src/ui/PreviewPanel.cpp` - 集成到画布渲染流程
+
+### 核心功能验证：
+1. ✅ 用户可以自由拖拽鼠标创建选区（不限制拖拽范围）
+2. ✅ 最终显示的选区自动裁剪到图层范围内（FinalSelection = RawSelection ∩ LayerRect）
+3. ✅ 选区越界时显示粉色警告线（在图层边界上）
+4. ✅ 选区完全在图层外时不显示（交集为空）
+
+---
+
 ## 1. 功能说明
 
 实现与 Photoshop 一致的矩形选区行为：

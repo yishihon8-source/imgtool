@@ -501,6 +501,13 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
             }
         }
         
+        // ✅ 保存原始图层边界（未变换的尺寸和位置）- 用于选区收缩
+        float originalImageX, originalImageY, originalImageWidth, originalImageHeight;
+        originalImageX = (config.canvas.width - targetWidth) * 0.5f;
+        originalImageY = (config.canvas.height - targetHeight) * 0.5f;
+        originalImageWidth = targetWidth;
+        originalImageHeight = targetHeight;
+        
         // ✅ PS 模型：如果有有效的变换矩形，始终使用它（无论是否在变换模式）
         float imageX, imageY;
         if (m_TransformRect.GetWidth() > 0 && m_TransformRect.GetHeight() > 0) {
@@ -645,6 +652,37 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
                 m_SelectionSystem.Update(logicalMousePos, isMouseDown, isMouseClicked, 
                                           shiftPressed, altPressed);
                 
+                // ✅ PS 风格：鼠标松开时自动收缩选区到图层范围（结算阶段）
+                // 这是核心功能：拖拽时自由，松手后理智
+                static bool wasMouseDown = false;
+                if (wasMouseDown && !isMouseDown) {
+                    // 鼠标刚松开，执行选区收缩
+                    // ✅ 关键：选区应该收缩到画布边界（图层边界），而不是图片的显示尺寸
+                    // 在 Photoshop 中，图层边界 = 画布边界 = (0, 0, canvas.width, canvas.height)
+                    SelectionRect layerBounds;
+                    layerBounds.x = 0.0f;  // 画布左上角
+                    layerBounds.y = 0.0f;  // 画布左上角
+                    layerBounds.width = static_cast<float>(config.canvas.width);   // 画布宽度
+                    layerBounds.height = static_cast<float>(config.canvas.height); // 画布高度
+                    layerBounds.active = true;
+                    
+                    // 调试输出
+                    printf("\n=== ClampSelectionToLayer DEBUG ===\n");
+                    printf("Canvas/Layer bounds (logical coords):\n");
+                    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n",
+                           layerBounds.x, layerBounds.y, layerBounds.width, layerBounds.height);
+                    printf("  LEFT=%.2f RIGHT=%.2f TOP=%.2f BOTTOM=%.2f\n",
+                           layerBounds.x, layerBounds.x + layerBounds.width,
+                           layerBounds.y, layerBounds.y + layerBounds.height);
+                    printf("\nImage display bounds (for comparison):\n");
+                    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n",
+                           imageX, imageY, targetWidth, targetHeight);
+                    printf("===================================\n\n");
+                    
+                    m_SelectionSystem.ClampSelectionToLayer(layerBounds);
+                }
+                wasMouseDown = isMouseDown;
+                
                 // 同步选区状态
                 m_HasSelection = m_SelectionSystem.HasActiveSelection();
                 
@@ -709,7 +747,19 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
             // ✅ 渲染选区（蚂蚁线和遮罩）
             if (m_SelectionSystem.HasActiveSelection()) {
                 float deltaTime = ImGui::GetIO().DeltaTime;
-                m_SelectionSystem.Render(drawList, canvasMin, canvasMax, deltaTime, m_CanvasZoom);
+                
+                // ✅ 创建图层边界（画布逻辑坐标）用于选区自动收缩
+                // 根据 RENAME_FIX.md 规范，图层边界始终是画布范围
+                SelectionRect layerBounds;
+                layerBounds.x = 0.0f;
+                layerBounds.y = 0.0f;
+                layerBounds.width = static_cast<float>(config.canvas.width);
+                layerBounds.height = static_cast<float>(config.canvas.height);
+                layerBounds.active = true;
+                
+                // 渲染选区（使用正确的 scale，而不是 m_CanvasZoom）
+                // scale = 画布逻辑坐标到屏幕坐标的缩放比例
+                m_SelectionSystem.Render(drawList, canvasMin, canvasMax, deltaTime, scale, &layerBounds);
                 
                 // ✅ 渲染越界警告线（必须在蚂蚁线之后，确保覆盖在上面）
                 // 注意：这里传递的是 scale，而不是 m_CanvasZoom

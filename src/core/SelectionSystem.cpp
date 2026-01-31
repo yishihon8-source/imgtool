@@ -116,7 +116,12 @@ void SelectionSystem::MoveSelection(const ImVec2& mousePos) {
 }
 
 void SelectionSystem::Render(ImDrawList* drawList, const ImVec2& canvasMin, 
-                              const ImVec2& canvasMax, float deltaTime, float scale) {
+                              const ImVec2& canvasMax, float deltaTime, float scale,
+                              const SelectionRect* layerBounds) {
+    // 注意：layerBounds 参数保留用于向后兼容，但不再在渲染时使用
+    // 选区裁剪应该在鼠标松开时通过 ClampSelectionToLayer() 完成
+    (void)layerBounds;  // 避免未使用参数警告
+    
     if (!m_Selection.active || !drawList) {
         return;
     }
@@ -269,5 +274,68 @@ void SelectionSystem::ApplySnapOffset(const ImVec2& offset) {
         m_Selection.x += offset.x;
         m_Selection.y += offset.y;
     }
+}
+
+void SelectionSystem::ClampSelectionToLayer(const SelectionRect& layerBounds) {
+    if (!m_Selection.active || !layerBounds.IsValid()) {
+        printf("ClampSelectionToLayer: Invalid input - selection.active=%d, layerBounds.IsValid()=%d\n",
+               m_Selection.active, layerBounds.IsValid());
+        return;
+    }
+
+    // ✅ PS 风格：结算式选区收缩（遵循你的需求文档）
+    // 核心：拖拽时自由，松手后理智
+    
+    // 获取标准化选区
+    SelectionRect norm = m_Selection.GetNormalized();
+    
+    printf("\n=== ClampSelectionToLayer DETAILED DEBUG ===\n");
+    printf("BEFORE clamp - Selection (normalized):\n");
+    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n", norm.x, norm.y, norm.width, norm.height);
+    printf("  LEFT=%.2f, RIGHT=%.2f, TOP=%.2f, BOTTOM=%.2f\n",
+           norm.x, norm.x + norm.width, norm.y, norm.y + norm.height);
+    
+    printf("\nLayer bounds:\n");
+    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n",
+           layerBounds.x, layerBounds.y, layerBounds.width, layerBounds.height);
+    printf("  LEFT=%.2f, RIGHT=%.2f, TOP=%.2f, BOTTOM=%.2f\n",
+           layerBounds.x, layerBounds.x + layerBounds.width,
+           layerBounds.y, layerBounds.y + layerBounds.height);
+    
+    // 将 SelectionRect 转换为 SelectionMath 格式
+    SelectionMath::SelectionRect rawSelection = SelectionMath::CreateSelectionRect(
+        norm.x, norm.y, norm.width, norm.height
+    );
+    
+    SelectionMath::LayerPixelBounds layer = SelectionMath::CreateLayerBounds(
+        layerBounds.x, layerBounds.y, layerBounds.width, layerBounds.height
+    );
+    
+    // 计算交集（选区自动收缩到图层范围）
+    SelectionMath::IntersectionRect intersection = SelectionMath::ComputeIntersection(
+        rawSelection, layer
+    );
+    
+    printf("\nAFTER clamp - Intersection result:\n");
+    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n",
+           intersection.x, intersection.y, intersection.width, intersection.height);
+    printf("  LEFT=%.2f, RIGHT=%.2f, TOP=%.2f, BOTTOM=%.2f\n",
+           intersection.x, intersection.x + intersection.width,
+           intersection.y, intersection.y + intersection.height);
+    printf("  IsValid=%d\n", intersection.IsValid());
+    printf("==========================================\n\n");
+    
+    // 如果交集无效（选区完全在图层外），清空选区
+    if (!intersection.IsValid()) {
+        m_Selection.Clear();
+        return;
+    }
+    
+    // 更新选区为裁剪后的结果
+    m_Selection.x = intersection.x;
+    m_Selection.y = intersection.y;
+    m_Selection.width = intersection.width;
+    m_Selection.height = intersection.height;
+    m_Selection.active = true;
 }
 

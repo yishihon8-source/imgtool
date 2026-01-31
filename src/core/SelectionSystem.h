@@ -54,6 +54,11 @@ struct SelectionRect {
         x = y = width = height = 0.0f;
         active = false;
     }
+
+    // ✅ 判断选区是否有效
+    bool IsValid() const {
+        return active && (width != 0.0f || height != 0.0f);
+    }
 };
 
 /**
@@ -95,14 +100,20 @@ public:
      * @param canvasMax 画布屏幕坐标最大值
      * @param deltaTime 帧时间差（用于蚂蚁线动画）
      * @param canvasZoom 画布缩放比例（用于坐标转换）
+     * @param layerBounds 图层像素边界（画布逻辑坐标，可选）
      * 
      * 渲染顺序（自下而上）：
      * 1. 半透明遮罩（选区外区域）
      * 2. 蚂蚁线（选区边界）
      * 注：越界粉色线由 OutOfBoundsRenderer 单独处理
+     * 
+     * ✅ PS 风格选区自动收缩（遵循 RENAME_FIX.md）：
+     * - 如果提供了 layerBounds，最终显示的选区会自动裁剪到图层范围内
+     * - 用户可以自由拖拽，但显示的选区永远不会超出图层
      */
     void Render(ImDrawList* drawList, const ImVec2& canvasMin, const ImVec2& canvasMax, 
-                float deltaTime, float canvasZoom = 1.0f);
+                float deltaTime, float canvasZoom = 1.0f, 
+                const SelectionRect* layerBounds = nullptr);
 
     // ========== 数据访问 ==========
 
@@ -126,6 +137,10 @@ public:
 
     // 应用吸附偏移到选区
     void ApplySnapOffset(const ImVec2& offset);
+
+    // ✅ PS 风格：结束拖拽后自动收缩选区到图层范围
+    // 这个方法应该在鼠标松开时调用（结算阶段）
+    void ClampSelectionToLayer(const SelectionRect& layerBounds);
 
 private:
     // ========== 数据 ==========
