@@ -1801,6 +1801,50 @@ bool PreviewPanel::Undo() {
     // 恢复图像数据
     m_CurrentImage = restoredImage;
     
+    // ✅ 重新计算有效内容边界（撤销后图像内容变了）
+    int channels = m_CurrentImage.channels;
+    if (channels == 4) {
+        // 计算非透明像素的边界
+        int minX = m_CurrentImage.width;
+        int minY = m_CurrentImage.height;
+        int maxX = -1;
+        int maxY = -1;
+        
+        for (int y = 0; y < m_CurrentImage.height; y++) {
+            for (int x = 0; x < m_CurrentImage.width; x++) {
+                int pixelIdx = (y * m_CurrentImage.width + x) * channels;
+                uint8_t alpha = m_CurrentImage.pixels[pixelIdx + 3];
+                
+                if (alpha > 0) {  // 有效像素（非完全透明）
+                    minX = std::min(minX, x);
+                    minY = std::min(minY, y);
+                    maxX = std::max(maxX, x);
+                    maxY = std::max(maxY, y);
+                }
+            }
+        }
+        
+        // 更新有效内容边界
+        if (maxX >= minX && maxY >= minY) {
+            m_ValidContentBounds.startX = static_cast<float>(minX) / m_CurrentImage.width;
+            m_ValidContentBounds.startY = static_cast<float>(minY) / m_CurrentImage.height;
+            m_ValidContentBounds.endX = static_cast<float>(maxX + 1) / m_CurrentImage.width;
+            m_ValidContentBounds.endY = static_cast<float>(maxY + 1) / m_CurrentImage.height;
+            m_ValidContentBounds.isValid = true;
+            printf("[Undo] Recalculated valid content bounds: (%.4f, %.4f) to (%.4f, %.4f)\n",
+                   m_ValidContentBounds.startX, m_ValidContentBounds.startY,
+                   m_ValidContentBounds.endX, m_ValidContentBounds.endY);
+        } else {
+            // 全部透明，清除有效边界
+            m_ValidContentBounds.Reset();
+            printf("[Undo] No valid content found, bounds reset.\n");
+        }
+    } else {
+        // 没有 Alpha 通道，重置有效边界（整张图片都有效）
+        m_ValidContentBounds.Reset();
+        printf("[Undo] No alpha channel, bounds reset.\n");
+    }
+    
     // 更新纹理
     if (!CreateTexture(m_CurrentImage)) {
         printf("[Undo] Failed to update texture.\n");
@@ -1841,6 +1885,50 @@ bool PreviewPanel::Redo() {
     
     // 恢复图像数据
     m_CurrentImage = restoredImage;
+    
+    // ✅ 重新计算有效内容边界（重做后图像内容变了）
+    int channels = m_CurrentImage.channels;
+    if (channels == 4) {
+        // 计算非透明像素的边界
+        int minX = m_CurrentImage.width;
+        int minY = m_CurrentImage.height;
+        int maxX = -1;
+        int maxY = -1;
+        
+        for (int y = 0; y < m_CurrentImage.height; y++) {
+            for (int x = 0; x < m_CurrentImage.width; x++) {
+                int pixelIdx = (y * m_CurrentImage.width + x) * channels;
+                uint8_t alpha = m_CurrentImage.pixels[pixelIdx + 3];
+                
+                if (alpha > 0) {  // 有效像素（非完全透明）
+                    minX = std::min(minX, x);
+                    minY = std::min(minY, y);
+                    maxX = std::max(maxX, x);
+                    maxY = std::max(maxY, y);
+                }
+            }
+        }
+        
+        // 更新有效内容边界
+        if (maxX >= minX && maxY >= minY) {
+            m_ValidContentBounds.startX = static_cast<float>(minX) / m_CurrentImage.width;
+            m_ValidContentBounds.startY = static_cast<float>(minY) / m_CurrentImage.height;
+            m_ValidContentBounds.endX = static_cast<float>(maxX + 1) / m_CurrentImage.width;
+            m_ValidContentBounds.endY = static_cast<float>(maxY + 1) / m_CurrentImage.height;
+            m_ValidContentBounds.isValid = true;
+            printf("[Redo] Recalculated valid content bounds: (%.4f, %.4f) to (%.4f, %.4f)\n",
+                   m_ValidContentBounds.startX, m_ValidContentBounds.startY,
+                   m_ValidContentBounds.endX, m_ValidContentBounds.endY);
+        } else {
+            // 全部透明，清除有效边界
+            m_ValidContentBounds.Reset();
+            printf("[Redo] No valid content found, bounds reset.\n");
+        }
+    } else {
+        // 没有 Alpha 通道，重置有效边界（整张图片都有效）
+        m_ValidContentBounds.Reset();
+        printf("[Redo] No alpha channel, bounds reset.\n");
+    }
     
     // 更新纹理
     if (!CreateTexture(m_CurrentImage)) {
