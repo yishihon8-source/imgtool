@@ -5,16 +5,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# ===== 静态链接所有依赖，生成独立 exe =====
+# ===== 商业级发布配置：使用动态链接（降低误报率）=====
 if(WIN32 AND MSVC)
-    # 静态链接 MSVC 运行时库
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # 动态链接 MSVC 运行时库（推荐用于发布）
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
-    # 静态链接标准库
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
+    # 动态链接标准库
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MD")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
     
-    # 链接器选项：静态链接所有库
+    # 链接器选项
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /INCREMENTAL:NO")
 endif()
 
@@ -32,14 +32,14 @@ file(GLOB IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-# GLFW - 静态链接
+# GLFW - 静态链接（第三方库可以静态链接）
 set(GLFW_DIR ${THIRD_PARTY_DIR}/glfw)
 option(GLFW_BUILD_DOCS OFF)
 option(GLFW_BUILD_TESTS OFF)
 option(GLFW_BUILD_EXAMPLES OFF)
-option(GLFW_BUILD_SHARED_LIBS OFF)  # 强制静态链接
-option(BUILD_SHARED_LIBS OFF)       # 全局静态链接
-set(USE_MSVC_RUNTIME_LIBRARY_DLL OFF)  # GLFW 使用静态运行时
+option(GLFW_BUILD_SHARED_LIBS OFF)  # GLFW 静态链接
+option(BUILD_SHARED_LIBS OFF)       # 第三方库静态链接
+set(USE_MSVC_RUNTIME_LIBRARY_DLL ON)  # GLFW 使用动态运行时
 add_subdirectory(${GLFW_DIR})
 
 # STB (header-only)
@@ -132,22 +132,14 @@ if(WIN32)
         NOMINMAX
     )
     # 隐藏控制台窗口（所有模式）
-    # ✅ 临时注释以便调试输出到控制台
-    # set_target_properties(${PROJECT_NAME} PROPERTIES
-    #     WIN32_EXECUTABLE TRUE
-    # )
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
     
-    # 添加应用程序图标
+    # 添加应用程序图标和版本信息（降低误报率）
     if(EXISTS ${CMAKE_SOURCE_DIR}/resources/app.rc)
         target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/resources/app.rc)
     endif()
-    
-    # ===== 静态链接 Windows 系统库 =====
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        -static
-        -static-libgcc
-        -static-libstdc++
-    )
 endif()
 
 # 编译选项

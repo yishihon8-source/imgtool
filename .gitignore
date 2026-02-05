@@ -1,43 +1,89 @@
-# Build directories
-build/
-build_release/
-bin/
-out/
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-install_manifest.txt
-*.ninja
-.ninja_deps
-.ninja_log
-
-# Visual Studio
-.vs/
-*.user
-*.suo
-*.sln
-*.vcxproj
-*.vcxproj.filters
-
-# Compiled files
+# ========================================
+# C++ 编译产物
+# ========================================
+*.o
+*.obj
 *.exe
 *.dll
 *.so
 *.dylib
 *.a
 *.lib
-*.obj
-*.o
 
-# IDE
+# ========================================
+# 构建目录
+# ========================================
+build/
+cmake-build-*/
+out/
+bin/
+lib/
+
+# ========================================
+# IDE 配置文件
+# ========================================
+.vs/
 .vscode/
 .idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
 
-# OS
+# ========================================
+# CMake 缓存
+# ========================================
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# ========================================
+# 临时文件
+# ========================================
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# ========================================
+# 发布目录（保留结构，不提交二进制文件）
+# ========================================
+release/ImageBatchTool/*.exe
+release/ImageBatchTool/*.dll
+release/*.zip
+release/*.exe
+
+# 但保留这些文件
+!release/ImageBatchTool/README.md
+!release/ImageBatchTool/使用说明.txt
+!release/setup.iss.iss
+
+# ========================================
+# 第三方库（如果通过 git submodule 管理则不需要）
+# ========================================
+third_party/glfw/
+third_party/imgui/
+
+# ========================================
+# 用户生成的内容
+# ========================================
+output/
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tga
+
+# ========================================
+# 打包脚本生成的文件
+# ========================================
+*.zip
+*_Setup_*.exe

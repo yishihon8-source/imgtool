@@ -27,6 +27,44 @@ LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 // remains consistent on all systems.
 IDI_ICON1               ICON                    "app.ico"
 
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version Info (重要：降低杀毒软件误报率)
+//
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "ImageBatchTool Studio"
+            VALUE "FileDescription", "Professional Image Batch Processing Tool - Photoshop-level Free Transform"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "ImageBatchTool.exe"
+            VALUE "LegalCopyright", "Copyright (C) 2026 ImageBatchTool Studio. All rights reserved."
+            VALUE "OriginalFilename", "ImageBatchTool.exe"
+            VALUE "ProductName", "ImageBatchTool - Professional Image Processor"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
+
 #endif    // 中文(简体，中国) resources
 /////////////////////////////////////////////////////////////////////////////
 
