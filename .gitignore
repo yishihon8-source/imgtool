@@ -1,24 +1,17 @@
 # Build directories
 build/
-build_cmake/
-build_new/
 build_release/
+bin/
 out/
-
-# Compiled executables
-*.exe
-*.dll
-*.so
-*.dylib
-*.pdb
-*.ilk
 
 # CMake
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+install_manifest.txt
 *.ninja
-build.ninja
+.ninja_deps
+.ninja_log
 
 # Visual Studio
 .vs/
@@ -28,32 +21,23 @@ build.ninja
 *.vcxproj
 *.vcxproj.filters
 
+# Compiled files
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.obj
+*.o
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
 # Logs
 *.log
-*.txt.log
-
-# ImGui config
-imgui.ini
-
-# Temporary files
-*.tmp
-*.temp
-*.bak
-*.backup
-*.swp
-*~
-
-# Debug output files
-debug_output.txt
-drawing_error.txt
-drawing_output.txt
-output*.txt
-COMPILE_REPORT_OUTPUT.txt
-
-# Test files
-final_test.txt
-cmake_config.log
-
-# Release packages (optional - uncomment if you don't want to track releases)
-# 发布版本/
-# 鍙戝竧鐗堟湰/

@@ -38,7 +38,26 @@ bool ImageLoader::Load(const std::string& filePath, ImageData& outData) {
 
         Logger::Debug("Calling stbi_load()...");
         int width, height, channels;
-        unsigned char* data = stbi_load(filePath.c_str(), &width, &height, &channels, 0);
+        unsigned char* data = nullptr;
+        
+        // Windows 上使用宽字符路径来支持中文文件名
+#ifdef _WIN32
+        // 将 UTF-8 路径转换为宽字符
+        std::wstring wpath = fs::path(filePath).wstring();
+        
+        // 使用 _wfopen 打开文件
+        FILE* file = _wfopen(wpath.c_str(), L"rb");
+        if (!file) {
+            Logger::Error("Failed to open file with wide char path: " + filePath);
+            return false;
+        }
+        
+        // 使用 stbi_load_from_file 从文件句柄读取
+        data = stbi_load_from_file(file, &width, &height, &channels, 0);
+        fclose(file);
+#else
+        data = stbi_load(filePath.c_str(), &width, &height, &channels, 0);
+#endif
 
         if (!data) {
             Logger::Error("stbi_load() failed for: " + filePath);
@@ -103,10 +122,33 @@ bool ImageLoader::GetInfo(const std::string& filePath, ImageInfo& outInfo) {
 
         int width, height, channels;
         Logger::Debug("Calling stbi_info()...");
+        
+        // Windows 上使用宽字符路径来支持中文文件名
+#ifdef _WIN32
+        // 将 UTF-8 路径转换为宽字符
+        std::wstring wpath = fs::path(filePath).wstring();
+        
+        // 使用 _wfopen 打开文件
+        FILE* file = _wfopen(wpath.c_str(), L"rb");
+        if (!file) {
+            Logger::Error("Failed to open file with wide char path: " + filePath);
+            return false;
+        }
+        
+        // 使用 stbi_info_from_file 从文件句柄读取
+        if (!stbi_info_from_file(file, &width, &height, &channels)) {
+            Logger::Error("stbi_info_from_file() failed for: " + filePath);
+            fclose(file);
+            return false;
+        }
+        fclose(file);
+#else
         if (!stbi_info(filePath.c_str(), &width, &height, &channels)) {
             Logger::Error("stbi_info() failed for: " + filePath);
             return false;
         }
+#endif
+        
         Logger::Debug("stbi_info() succeeded: " + std::to_string(width) + "x" + std::to_string(height) + 
                       " channels=" + std::to_string(channels));
 

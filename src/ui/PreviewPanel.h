@@ -41,6 +41,20 @@ public:
                 bool canvasApplied,
                 bool& transformMode,
                 bool& selectionMode);
+    
+    /**
+     * @brief 保存当前图片的变换状态（供外部调用）
+     * @param imageInfo 要保存到的图片信息
+     */
+    void SaveCurrentTransformState(ImageInfo& imageInfo);
+    
+    /**
+     * @brief 获取缓存的图片数据（如果有修改）
+     * @param filePath 图片路径
+     * @param outImageData 输出图片数据
+     * @return 如果有缓存且已修改返回 true
+     */
+    bool GetCachedImageData(const std::string& filePath, ImageData& outImageData) const;
 
 private:
     /**
@@ -133,11 +147,31 @@ private:
     // 图像历史记录（撤销/重做）
     ImageHistory m_ImageHistory;                        // 历史记录管理器
     
+    // ✅ 有效内容边界（用于删除后的变换框收缩）
+    // 存储图片中非透明像素的边界（归一化坐标 0-1）
+    struct ValidContentBounds {
+        float startX = 0.0f;  // 有效内容起始 X（归一化）
+        float startY = 0.0f;  // 有效内容起始 Y（归一化）
+        float endX = 1.0f;    // 有效内容结束 X（归一化）
+        float endY = 1.0f;    // 有效内容结束 Y（归一化）
+        bool isValid = false; // 是否有有效边界
+        
+        void Reset() {
+            startX = 0.0f;
+            startY = 0.0f;
+            endX = 1.0f;
+            endY = 1.0f;
+            isValid = false;
+        }
+    };
+    ValidContentBounds m_ValidContentBounds;  // 当前图片的有效内容边界
+    
     // ✅ 图片缓存系统（保存每张图片的修改状态和历史记录）
     struct ImageCache {
         ImageData imageData;
         bool modified = false;
         ImageHistory history;  // ✅ 保存每张图片的历史记录
+        ValidContentBounds validBounds;  // ✅ 保存有效内容边界
     };
     std::map<std::string, ImageCache> m_ImageCache;  // 路径 -> 缓存数据
     

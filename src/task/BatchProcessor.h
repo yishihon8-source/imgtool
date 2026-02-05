@@ -15,6 +15,8 @@ struct BatchTask {
     std::string outputPath;
     ProcessConfig config;
     ImageTransformState transformState;  // 用户的变换状态
+    ImageData preprocessedImage;  // ✅ 预处理的图片数据（如果有修改，如删除选区）
+    bool usePreprocessed = false;  // ✅ 是否使用预处理的数据
 };
 
 /**

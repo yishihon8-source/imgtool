@@ -60,11 +60,17 @@ void BatchProcessor::Stop() {
 
 bool BatchProcessor::ProcessTask(const BatchTask& task) {
     try {
-        // 加载图片
+        // ✅ 优先使用预处理的图片数据（如果有修改，如删除选区）
         ImageData source;
-        if (!ImageLoader::Load(task.inputPath, source)) {
-            std::cerr << "Failed to load: " << task.inputPath << std::endl;
-            return false;
+        if (task.usePreprocessed && task.preprocessedImage.IsValid()) {
+            std::cout << "Using preprocessed image data for: " << task.inputPath << std::endl;
+            source = task.preprocessedImage;
+        } else {
+            // 从磁盘加载原始图片
+            if (!ImageLoader::Load(task.inputPath, source)) {
+                std::cerr << "Failed to load: " << task.inputPath << std::endl;
+                return false;
+            }
         }
 
         // 处理图片，传递用户的变换状态

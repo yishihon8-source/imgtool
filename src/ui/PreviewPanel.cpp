@@ -619,7 +619,39 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
         
         // 变换模式：显示控制点和对齐辅助线
         if (m_TransformMode) {
-            RenderTransformControls(originalImageMin, originalImageMax);
+            // ✅ PS 风格：如果有有效内容边界，变换框只包含有效内容
+            ImVec2 transformMin = originalImageMin;
+            ImVec2 transformMax = originalImageMax;
+            
+            if (m_ValidContentBounds.isValid) {
+                // 计算有效内容在当前变换矩形中的位置（画布逻辑坐标）
+                float validLeft = static_cast<float>(m_TransformRect.left) + 
+                                  m_ValidContentBounds.startX * static_cast<float>(m_TransformRect.GetWidth());
+                float validTop = static_cast<float>(m_TransformRect.top) + 
+                                 m_ValidContentBounds.startY * static_cast<float>(m_TransformRect.GetHeight());
+                float validRight = static_cast<float>(m_TransformRect.left) + 
+                                   m_ValidContentBounds.endX * static_cast<float>(m_TransformRect.GetWidth());
+                float validBottom = static_cast<float>(m_TransformRect.top) + 
+                                    m_ValidContentBounds.endY * static_cast<float>(m_TransformRect.GetHeight());
+                
+                // 转换为屏幕坐标
+                transformMin.x = canvasX + validLeft * scale;
+                transformMin.y = canvasY + validTop * scale;
+                transformMax.x = canvasX + validRight * scale;
+                transformMax.y = canvasY + validBottom * scale;
+                
+                printf("\n=== Transform Controls with Valid Bounds ===\n");
+                printf("Valid bounds (normalized): (%.4f, %.4f) to (%.4f, %.4f)\n",
+                       m_ValidContentBounds.startX, m_ValidContentBounds.startY,
+                       m_ValidContentBounds.endX, m_ValidContentBounds.endY);
+                printf("Valid bounds (canvas logical): (%.2f, %.2f) to (%.2f, %.2f)\n",
+                       validLeft, validTop, validRight, validBottom);
+                printf("Valid bounds (screen): (%.2f, %.2f) to (%.2f, %.2f)\n",
+                       transformMin.x, transformMin.y, transformMax.x, transformMax.y);
+                printf("============================================\n\n");
+            }
+            
+            RenderTransformControls(transformMin, transformMax);
             
             // 更新并渲染对齐辅助线（仅在拖拽图片时）
             if (m_IsDraggingImage) {
@@ -996,6 +1028,7 @@ bool PreviewPanel::LoadCurrentImage(const std::string& filePath) {
             cache.imageData = m_CurrentImage;
             cache.modified = m_ImageModified;
             cache.history = m_ImageHistory;  // ✅ 保存历史记录
+            cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
             m_ImageCache[m_CurrentImagePath] = cache;
             printf("[LoadImage] Saved image to cache: %s (modified=%d, history_count=%zu)\n", 
                    m_CurrentImagePath.c_str(), m_ImageModified, m_ImageHistory.GetHistoryCount());
@@ -1012,6 +1045,7 @@ bool PreviewPanel::LoadCurrentImage(const std::string& filePath) {
             m_CurrentImagePath = filePath;
             m_ImageModified = it->second.modified;
             m_ImageHistory = it->second.history;  // ✅ 恢复历史记录
+            m_ValidContentBounds = it->second.validBounds;  // ✅ 恢复有效内容边界
             
             // 更新纹理
             if (!CreateTexture(m_CurrentImage)) {
@@ -1044,6 +1078,7 @@ bool PreviewPanel::LoadCurrentImage(const std::string& filePath) {
         
         // 清空历史记录（新加载的图片）
         m_ImageHistory.Clear();
+        m_ValidContentBounds.Reset();  // ✅ 清空有效内容边界
         printf("[LoadImage] Loaded new image from disk, history cleared.\n");
         
         return true;
@@ -1173,6 +1208,29 @@ void PreviewPanel::SaveTransformState(ImageInfo& imageInfo) {
     // 检查是否有自定义变换（不是默认值）
     imageInfo.transformState.hasTransform = 
         (m_TransformRect.GetWidth() > 0 && m_TransformRect.GetHeight() > 0);
+}
+
+void PreviewPanel::SaveCurrentTransformState(ImageInfo& imageInfo) {
+    // 公共接口，直接调用私有方法
+    SaveTransformState(imageInfo);
+}
+
+bool PreviewPanel::GetCachedImageData(const std::string& filePath, ImageData& outImageData) const {
+    // 查找缓存
+    auto it = m_ImageCache.find(filePath);
+    if (it != m_ImageCache.end() && it->second.modified) {
+        // 找到缓存且已修改
+        outImageData = it->second.imageData;
+        return true;
+    }
+    
+    // 检查当前图片（可能还没保存到缓存）
+    if (m_CurrentImagePath == filePath && m_ImageModified && m_CurrentImage.IsValid()) {
+        outImageData = m_CurrentImage;
+        return true;
+    }
+    
+    return false;
 }
 
 void PreviewPanel::RestoreTransformState(const ImageInfo& imageInfo) {
@@ -1549,12 +1607,45 @@ bool PreviewPanel::DeleteSelectionContent(const ProcessConfig& config) {
     printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n", 
            norm.x, norm.y, norm.width, norm.height);
     
+    // ✅ 关键修复：将画布坐标转换为图片像素坐标
+    // 获取图片在画布中的变换信息
+    float imageX = static_cast<float>(m_TransformRect.left);
+    float imageY = static_cast<float>(m_TransformRect.top);
+    float imageWidth = static_cast<float>(m_TransformRect.GetWidth());
+    float imageHeight = static_cast<float>(m_TransformRect.GetHeight());
+    
+    printf("Image transform (canvas logical coords):\n");
+    printf("  pos: (%.2f, %.2f), size: (%.2f, %.2f)\n", 
+           imageX, imageY, imageWidth, imageHeight);
+    printf("Image original size: %d x %d\n", m_CurrentImage.width, m_CurrentImage.height);
+    
+    // 计算选区相对于图片的坐标（画布坐标 -> 图片坐标）
+    // 选区在画布中的位置 - 图片在画布中的位置 = 选区相对于图片的位置
+    float selectionInImageX = norm.x - imageX;
+    float selectionInImageY = norm.y - imageY;
+    
+    // 将画布坐标系的尺寸转换为图片像素坐标系
+    // 缩放比例 = 图片原始尺寸 / 图片在画布中的显示尺寸
+    float scaleX = m_CurrentImage.width / imageWidth;
+    float scaleY = m_CurrentImage.height / imageHeight;
+    
+    printf("Scale factors: scaleX=%.4f, scaleY=%.4f\n", scaleX, scaleY);
+    
+    // 转换为图片像素坐标
+    float pixelX = selectionInImageX * scaleX;
+    float pixelY = selectionInImageY * scaleY;
+    float pixelWidth = norm.width * scaleX;
+    float pixelHeight = norm.height * scaleY;
+    
+    printf("Selection in image pixel coords:\n");
+    printf("  x=%.2f, y=%.2f, width=%.2f, height=%.2f\n", 
+           pixelX, pixelY, pixelWidth, pixelHeight);
+    
     // 4. 计算删除区域（选区 ∩ 图像边界）
-    // ✅ 关键修复：使用图像实际尺寸，而不是画布尺寸
-    int deleteLeft = std::max(0, static_cast<int>(std::floor(norm.x)));
-    int deleteTop = std::max(0, static_cast<int>(std::floor(norm.y)));
-    int deleteRight = std::min(m_CurrentImage.width, static_cast<int>(std::ceil(norm.x + norm.width)));
-    int deleteBottom = std::min(m_CurrentImage.height, static_cast<int>(std::ceil(norm.y + norm.height)));
+    int deleteLeft = std::max(0, static_cast<int>(std::floor(pixelX)));
+    int deleteTop = std::max(0, static_cast<int>(std::floor(pixelY)));
+    int deleteRight = std::min(m_CurrentImage.width, static_cast<int>(std::ceil(pixelX + pixelWidth)));
+    int deleteBottom = std::min(m_CurrentImage.height, static_cast<int>(std::ceil(pixelY + pixelHeight)));
     
     printf("Image size: %d x %d\n", m_CurrentImage.width, m_CurrentImage.height);
     printf("Canvas size: %d x %d\n", config.canvas.width, config.canvas.height);
@@ -1637,12 +1728,59 @@ bool PreviewPanel::DeleteSelectionContent(const ProcessConfig& config) {
         cache.imageData = m_CurrentImage;
         cache.modified = true;
         cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
         m_ImageCache[m_CurrentImagePath] = cache;
         printf("Cache updated for: %s\n", m_CurrentImagePath.c_str());
     }
     
     printf("Texture updated successfully.\n");
     printf("Image marked as modified.\n");
+    
+    // ✅ 9. 计算剩余有效像素的边界（非透明区域）
+    int minX = m_CurrentImage.width;
+    int minY = m_CurrentImage.height;
+    int maxX = -1;
+    int maxY = -1;
+    
+    for (int y = 0; y < m_CurrentImage.height; y++) {
+        for (int x = 0; x < m_CurrentImage.width; x++) {
+            int pixelIdx = (y * m_CurrentImage.width + x) * channels;
+            uint8_t alpha = m_CurrentImage.pixels[pixelIdx + 3];
+            
+            if (alpha > 0) {  // 有效像素（非完全透明）
+                minX = std::min(minX, x);
+                minY = std::min(minY, y);
+                maxX = std::max(maxX, x);
+                maxY = std::max(maxY, y);
+            }
+        }
+    }
+    
+    // ✅ 10. 保存有效内容边界（归一化坐标）
+    // 不改变 m_TransformRect，而是记录有效内容的相对位置
+    if (maxX >= minX && maxY >= minY) {
+        printf("\n=== Save Valid Content Bounds ===\n");
+        printf("Valid pixel bounds: (%d, %d) to (%d, %d)\n", minX, minY, maxX, maxY);
+        printf("Valid size: %d x %d\n", maxX - minX + 1, maxY - minY + 1);
+        
+        // 计算有效内容在图片中的相对位置（归一化坐标 0-1）
+        m_ValidContentBounds.startX = static_cast<float>(minX) / m_CurrentImage.width;
+        m_ValidContentBounds.startY = static_cast<float>(minY) / m_CurrentImage.height;
+        m_ValidContentBounds.endX = static_cast<float>(maxX + 1) / m_CurrentImage.width;
+        m_ValidContentBounds.endY = static_cast<float>(maxY + 1) / m_CurrentImage.height;
+        m_ValidContentBounds.isValid = true;
+        
+        printf("Valid content normalized coords: (%.4f, %.4f) to (%.4f, %.4f)\n",
+               m_ValidContentBounds.startX, m_ValidContentBounds.startY,
+               m_ValidContentBounds.endX, m_ValidContentBounds.endY);
+        printf("Note: Transform rect NOT changed. Valid bounds will be used for Ctrl+T.\n");
+        printf("==================================\n\n");
+    } else {
+        // 没有有效像素（全部透明），清除有效边界
+        m_ValidContentBounds.Reset();
+        printf("\n[Warning] No valid pixels found after deletion.\n\n");
+    }
+    
     printf("================================\n\n");
     
     return true;
@@ -1678,6 +1816,7 @@ bool PreviewPanel::Undo() {
         cache.imageData = m_CurrentImage;
         cache.modified = true;
         cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
         m_ImageCache[m_CurrentImagePath] = cache;
         printf("[Undo] Updated cache for: %s\n", m_CurrentImagePath.c_str());
     }
@@ -1718,6 +1857,7 @@ bool PreviewPanel::Redo() {
         cache.imageData = m_CurrentImage;
         cache.modified = true;
         cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
         m_ImageCache[m_CurrentImagePath] = cache;
         printf("[Redo] Updated cache for: %s\n", m_CurrentImagePath.c_str());
     }

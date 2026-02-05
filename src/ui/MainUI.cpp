@@ -522,6 +522,12 @@ void MainUI::StartBatchProcess() {
         return;
     }
 
+    // ✅ 在开始批处理前，先保存当前图片的变换状态
+    // 这样用户对当前图片的调整才会被应用到输出中
+    if (m_CurrentImageIndex >= 0 && m_CurrentImageIndex < static_cast<int>(m_ImageList.size())) {
+        m_PreviewPanel->SaveCurrentTransformState(m_ImageList[m_CurrentImageIndex]);
+    }
+
     // 打开输出文件夹选择对话框
     std::string outputFolder = FileDialog::OpenFolder();
     if (outputFolder.empty()) {
@@ -531,7 +537,7 @@ void MainUI::StartBatchProcess() {
     // 保存输出目录供"打开目录"使用
     m_OutputDirectory = outputFolder;
 
-    // 按照素材列表的顺序创建任务，并传递变换状态
+    // 按照素材列表的顺序创建任务，并传递变换状态和修改后的图片数据
     std::vector<BatchTask> tasks;
     for (size_t i = 0; i < m_ImageList.size(); ++i) {
         const auto& info = m_ImageList[i];
@@ -540,6 +546,17 @@ void MainUI::StartBatchProcess() {
         task.outputPath = outputFolder + "/" + info.fileName;
         task.config = m_ProcessConfig;
         task.transformState = info.transformState;  // 传递变换状态
+        
+        // ✅ 检查是否有缓存的修改后的图片数据（如删除选区）
+        ImageData cachedImage;
+        if (m_PreviewPanel->GetCachedImageData(info.filePath, cachedImage)) {
+            task.preprocessedImage = cachedImage;
+            task.usePreprocessed = true;
+            Logger::Info("Using cached modified image for: " + info.fileName);
+        } else {
+            task.usePreprocessed = false;
+        }
+        
         tasks.push_back(task);
     }
 

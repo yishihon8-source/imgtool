@@ -1,6 +1,7 @@
 #include "SelectionSystem.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 SelectionSystem::SelectionSystem()
     : m_AnchorPoint(0.0f, 0.0f)
