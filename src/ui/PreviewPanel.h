@@ -7,6 +7,7 @@
 #include "core/SelectionMath.h"
 #include "core/OutOfBoundsRenderer.h"
 #include "core/ImageHistory.h"
+#include "core/TileImageHistory.h"
 #include <imgui.h>
 #include <vector>
 #include <map>
@@ -55,6 +56,27 @@ public:
      * @return 如果有缓存且已修改返回 true
      */
     bool GetCachedImageData(const std::string& filePath, ImageData& outImageData) const;
+    
+    /**
+     * @brief 获取当前图片的历史记录（只读）
+     * @return 历史记录引用
+     */
+    const ImageHistory& GetImageHistory() const { return m_ImageHistory; }
+    
+    /**
+     * @brief 撤销操作（公共接口）
+     */
+    bool Undo();
+    
+    /**
+     * @brief 重做操作（公共接口）
+     */
+    bool Redo();
+    
+    /**
+     * @brief 清除所有缓存（用于状态恢复）
+     */
+    void ClearCache();
 
 private:
     /**
@@ -145,7 +167,9 @@ private:
     OutOfBoundsRenderer m_OutOfBoundsRenderer;          // 选区越界警告线渲染器
     
     // 图像历史记录（撤销/重做）
-    ImageHistory m_ImageHistory;                        // 历史记录管理器
+    ImageHistory m_ImageHistory;                        // 历史记录管理器（旧系统）
+    std::unique_ptr<TileImageHistory> m_TileImageHistory;  // Tile-based 历史记录（新系统）
+    bool m_UseTileBasedHistory = true;                  // 是否使用 Tile-based 系统（默认启用）
     
     // ✅ 有效内容边界（用于删除后的变换框收缩）
     // 存储图片中非透明像素的边界（归一化坐标 0-1）
@@ -170,7 +194,8 @@ private:
     struct ImageCache {
         ImageData imageData;
         bool modified = false;
-        ImageHistory history;  // ✅ 保存每张图片的历史记录
+        ImageHistory history;  // ✅ 保存每张图片的历史记录（旧系统）
+        std::unique_ptr<TileImageHistory> tileHistory;  // ✅ Tile-based 历史记录（新系统）
         ValidContentBounds validBounds;  // ✅ 保存有效内容边界
     };
     std::map<std::string, ImageCache> m_ImageCache;  // 路径 -> 缓存数据
@@ -221,18 +246,6 @@ private:
      * - 删除后选区仍然保留
      */
     bool DeleteSelectionContent(const ProcessConfig& config);
-    
-    /**
-     * @brief 撤销上一次操作（Ctrl+Z）
-     * @return 成功返回 true
-     */
-    bool Undo();
-    
-    /**
-     * @brief 重做下一次操作（Ctrl+Shift+Z）
-     * @return 成功返回 true
-     */
-    bool Redo();
     
     // 当前图片索引（用于跟踪切换）
     int m_LastImageIndex = -1;

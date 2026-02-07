@@ -142,6 +142,11 @@ public:
     // 这个方法应该在鼠标松开时调用（结算阶段）
     void ClampSelectionToLayer(const SelectionRect& layerBounds);
 
+    // ✅ 方向键移动选区（PS 风格）
+    // @param offsetX 水平偏移量（画布逻辑坐标）
+    // @param offsetY 垂直偏移量（画布逻辑坐标）
+    void MoveSelectionByOffset(float offsetX, float offsetY);
+
 private:
     // ========== 数据 ==========
     SelectionRect m_Selection;      // 选区数据模型

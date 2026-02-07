@@ -340,3 +340,15 @@ void SelectionSystem::ClampSelectionToLayer(const SelectionRect& layerBounds) {
     m_Selection.active = true;
 }
 
+void SelectionSystem::MoveSelectionByOffset(float offsetX, float offsetY) {
+    if (!m_Selection.active) {
+        return;
+    }
+    
+    // 移动选区（保持宽高不变）
+    m_Selection.x += offsetX;
+    m_Selection.y += offsetY;
+    
+    printf("[MoveSelectionByOffset] Moved selection by (%.2f, %.2f)\n", offsetX, offsetY);
+}
+

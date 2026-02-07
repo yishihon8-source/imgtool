@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
+#include "core/GlobalHistory.h"
 #include "task/BatchProcessor.h"
 #include <memory>
 #include <vector>
@@ -9,6 +10,7 @@ class ImageListPanel;
 class PreviewPanel;
 class ControlPanel;
 class SettingsPanel;
+class HistoryPanel;
 
 /**
  * @brief 主 UI 类
@@ -91,6 +93,11 @@ private:
     void OpenFileExplorer();
 
     /**
+     * @brief 导出当前图片
+     */
+    void ExportCurrentImage();
+
+    /**
      * @brief 渲染控制面板（内联实现）
      */
     void RenderControlPanel(ProcessConfig& config);
@@ -126,6 +133,16 @@ private:
      * @brief 渲染批量处理完成对话框
      */
     void RenderBatchProcessCompleteDialog();
+    
+    /**
+     * @brief 显示导出完成对话框
+     */
+    void ShowExportComplete(const std::string& message);
+    
+    /**
+     * @brief 渲染导出完成对话框
+     */
+    void RenderExportCompleteDialog();
 
 private:
     // UI 面板
@@ -133,6 +150,7 @@ private:
     std::unique_ptr<PreviewPanel> m_PreviewPanel;
     std::unique_ptr<ControlPanel> m_ControlPanel;
     std::unique_ptr<SettingsPanel> m_SettingsPanel;
+    std::unique_ptr<HistoryPanel> m_HistoryPanel;
 
     // 批量处理器
     std::unique_ptr<BatchProcessor> m_BatchProcessor;
@@ -164,10 +182,16 @@ private:
     bool m_ShowBatchProcessComplete = false;
     std::string m_BatchProcessMessage = "";
     bool m_BatchCompletePopupOpened = false;
+    
+    // 导出当前图片完成对话框状态
+    bool m_ShowExportComplete = false;
+    std::string m_ExportCompleteMessage = "";
+    bool m_ExportCompletePopupOpened = false;
 
     // UI 状态
     bool m_ShowAbout = false;
     bool m_ShowSettings = false;  // 是否显示设置面板
+    bool m_ShowHistory = false;   // 是否显示历史记录面板
     
     // 工具栏状态
     enum class ToolMode {
@@ -176,4 +200,22 @@ private:
         Selection   // 矩形选框工具
     };
     ToolMode m_CurrentTool = ToolMode::None;
+    
+    // 全局操作历史记录系统
+    GlobalHistory m_GlobalHistory;
+    
+    /**
+     * @brief 保存当前状态快照（用于历史记录恢复）
+     */
+    struct StateSnapshot {
+        std::vector<ImageInfo> imageList;
+        int currentImageIndex;
+        ProcessConfig processConfig;
+        bool canvasApplied;
+        Canvas tempCanvas;
+        std::string outputDirectory;
+    };
+    
+    StateSnapshot CaptureCurrentState() const;
+    void RestoreState(const StateSnapshot& snapshot);
 };

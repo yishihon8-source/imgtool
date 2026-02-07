@@ -104,3 +104,10 @@ std::vector<std::string> ImageHistory::GetHistoryDescriptions() const {
     return descriptions;
 }
 
+std::string ImageHistory::GetDescription(int index) const {
+    if (index < 0 || index >= static_cast<int>(m_History.size())) {
+        return "";
+    }
+    return m_History[index].description;
+}
+

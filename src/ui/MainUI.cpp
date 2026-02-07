@@ -3,6 +3,7 @@
 #include "PreviewPanel.h"
 #include "ControlPanel.h"
 #include "SettingsPanel.h"
+#include "HistoryPanel.h"
 #include "utils/FileDialog.h"
 #include "core/ImageLoader.h"
 #include "utils/Logger.h"
@@ -11,6 +12,8 @@
 #include <imgui_internal.h>
 #include <cstdio>
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,6 +26,7 @@ MainUI::MainUI() {
     m_PreviewPanel = std::make_unique<PreviewPanel>();
     m_ControlPanel = std::make_unique<ControlPanel>();
     m_SettingsPanel = std::make_unique<SettingsPanel>();
+    m_HistoryPanel = std::make_unique<HistoryPanel>();
     m_BatchProcessor = std::make_unique<BatchProcessor>();
 
     // 设置默认画布参数为 750x1000，背景白色
@@ -179,11 +183,27 @@ void MainUI::Render() {
         m_SettingsPanel->Render(m_ShowSettings);
     }
     
+    // 历史记录面板（只在显示时渲染）
+    if (m_ShowHistory) {
+        // 设置面板位置在历史记录按钮下方
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImVec2 panelPos(viewport->WorkPos.x + viewport->WorkSize.x - 350, viewport->WorkPos.y + 130);
+        ImGui::SetNextWindowPos(panelPos, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(320, 450), ImGuiCond_FirstUseEver);
+        
+        ImGui::Begin("历史记录 (History)", &m_ShowHistory, ImGuiWindowFlags_NoCollapse);
+        m_HistoryPanel->Render(m_PreviewPanel.get(), &m_GlobalHistory);
+        ImGui::End();
+    }
+    
     // 渲染导入提示对话框
     RenderNotificationDialog();
     
-    // 渲染处理完成对话框
+    // 渲染批量处理完成对话框
     RenderBatchProcessCompleteDialog();
+    
+    // 渲染导出完成对话框
+    RenderExportCompleteDialog();
 }
 
 void MainUI::RenderTopBar() {
@@ -251,8 +271,8 @@ void MainUI::RenderTopBar() {
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor(2);
 
-    // 右侧：状态 + 按钮
-    ImGui::SameLine(viewport->WorkSize.x - 380);
+    // 右侧：状态 + 历史记录 + 按钮
+    ImGui::SameLine(viewport->WorkSize.x - 480);  // 增加宽度以容纳历史记录按钮
     ImGui::SetCursorPosY(buttonY);  // 先设置到按钮的Y位置
     
     // 状态文字 - 使用按钮样式但禁用交互，确保高度一致
@@ -264,6 +284,36 @@ void MainUI::RenderTopBar() {
     ImGui::Button("● 就绪", ImVec2(80, 50));  // 使用按钮确保高度一致
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor(4);
+    
+    // 历史记录按钮（PS 风格图标）
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(buttonY);
+    
+    // 根据面板状态改变按钮颜色
+    if (m_ShowHistory) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.69f, 1.0f, 1.0f));
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.22f, 0.22f, 1.0f));
+    }
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
+    ImGui::SetWindowFontScale(1.0f);
+    if (ImGui::Button("历史", ImVec2(50, 50))) {  // 使用中文文字
+        m_ShowHistory = !m_ShowHistory;
+    }
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::SetWindowFontScale(1.1f);
+        ImGui::Text("历史记录 (Ctrl+Z/Ctrl+Shift+Z)");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::EndTooltip();
+    }
     
     // 全局设置按钮
     ImGui::SameLine();
@@ -571,6 +621,15 @@ void MainUI::StartBatchProcess() {
                     std::to_string(m_ImageList.size()) + "\n" +
                     "输出目录：" + m_OutputDirectory;
                 ShowBatchProcessComplete(message);
+                
+                // 保存批量处理之后的状态快照
+                StateSnapshot snapshot = CaptureCurrentState();
+                
+                // 记录到全局操作历史
+                m_GlobalHistory.Push(
+                    "批量处理: " + std::to_string(m_ImageList.size()) + " 张图片",
+                    [this, snapshot]() { RestoreState(snapshot); }
+                );
             } else {
                 ShowError("批处理失败！\n请检查文件权限或重试。");
             }
@@ -661,6 +720,15 @@ void MainUI::AddImages() {
             }
             Logger::Info(message);
             ShowSuccess(message);
+            
+            // 保存添加图片之后的状态快照
+            StateSnapshot snapshot = CaptureCurrentState();
+            
+            // 记录到全局操作历史
+            m_GlobalHistory.Push(
+                "添加图片: " + std::to_string(addedCount) + " 张",
+                [this, snapshot]() { RestoreState(snapshot); }
+            );
         }
 
         Logger::Debug("Checking if need to auto-select first image...");
@@ -773,6 +841,15 @@ void MainUI::AddImagesFromFolder() {
             }
             Logger::Info(message);
             ShowSuccess(message);
+            
+            // 保存添加文件夹之后的状态快照
+            StateSnapshot snapshot = CaptureCurrentState();
+            
+            // 记录到全局操作历史
+            m_GlobalHistory.Push(
+                "添加文件夹: " + std::to_string(addedCount) + " 张图片",
+                [this, snapshot]() { RestoreState(snapshot); }
+            );
         }
 
         Logger::Debug("Checking if need to auto-select first image...");
@@ -799,6 +876,138 @@ void MainUI::OpenFileExplorer() {
     } else {
         // 如果还没有选择输出目录，打开我的电脑
         FileDialog::OpenInExplorer("");
+    }
+}
+
+void MainUI::ExportCurrentImage() {
+    try {
+        Logger::Info("=== ExportCurrentImage() started ===");
+        
+        // 检查是否有选中的图片
+        if (m_CurrentImageIndex < 0 || m_CurrentImageIndex >= static_cast<int>(m_ImageList.size())) {
+            Logger::Warning("No image selected for export");
+            ShowError("请先在图片列表中选择一张图片");
+            return;
+        }
+        
+        auto& currentImage = m_ImageList[m_CurrentImageIndex];
+        Logger::Info("Exporting image: " + currentImage.fileName);
+        
+        // ✅ 在导出前，先保存当前图片的变换状态
+        // 这样用户对当前图片的调整才会被应用到导出中
+        m_PreviewPanel->SaveCurrentTransformState(currentImage);
+        Logger::Info("Saved current transform state before export");
+        
+        // 根据当前导出格式设置文件过滤器和默认扩展名
+        const char* filter = nullptr;
+        const char* defaultExt = nullptr;
+        
+        if (m_ProcessConfig.format == OutputFormat::PNG) {
+            filter = "PNG Files\0*.png\0All Files\0*.*\0";
+            defaultExt = "png";
+        } else {
+            filter = "JPEG Files\0*.jpg;*.jpeg\0All Files\0*.*\0";
+            defaultExt = "jpg";
+        }
+        
+        // 打开文件保存对话框
+        std::string savePath = FileDialog::SaveFile(filter, defaultExt);
+        if (savePath.empty()) {
+            Logger::Debug("User cancelled save dialog");
+            return;  // 用户取消了保存
+        }
+        
+        Logger::Info("Save path: " + savePath);
+        
+        // ✅ 检查画布是否已应用
+        if (!m_CanvasApplied) {
+            Logger::Warning("Canvas not applied, exporting without canvas processing");
+            ShowError("画布尚未应用!\n\n请先在右侧面板点击「应用画布」按钮\n然后再导出图片");
+            return;
+        }
+        
+        // ✅ 创建批处理任务来处理单张图片（应用画布和变换）
+        BatchTask task;
+        task.inputPath = currentImage.filePath;
+        task.outputPath = savePath;
+        task.config = m_ProcessConfig;
+        task.transformState = currentImage.transformState;  // 传递变换状态
+        
+        // ✅ 检查是否有缓存的修改后的图片数据（如删除选区）
+        ImageData cachedImage;
+        if (m_PreviewPanel->GetCachedImageData(currentImage.filePath, cachedImage)) {
+            task.preprocessedImage = cachedImage;
+            task.usePreprocessed = true;
+            Logger::Info("Using cached modified image for export");
+        } else {
+            task.usePreprocessed = false;
+            Logger::Info("No cached modifications, will use original image");
+        }
+        
+        // ✅ 使用 BatchProcessor 处理单张图片（这样会应用画布和变换）
+        std::vector<BatchTask> tasks = { task };
+        
+        Logger::Info("Starting batch processor for single image export...");
+        
+        // 同步处理（等待完成）
+        bool exportSuccess = false;
+        std::string errorMessage;
+        
+        m_BatchProcessor->Start(tasks,
+            [](const BatchProgress& progress) { 
+                (void)progress;
+            },
+            [&exportSuccess, &errorMessage, this](bool success) {
+                exportSuccess = success;
+                if (!success) {
+                    errorMessage = "批处理引擎处理失败";
+                }
+                Logger::Info("Export batch processing completed: " + std::string(success ? "success" : "failed"));
+            }
+        );
+        
+        // 等待处理完成（最多等待10秒）
+        int waitCount = 0;
+        while (m_BatchProcessor->IsRunning() && waitCount < 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            waitCount++;
+        }
+        
+        if (m_BatchProcessor->IsRunning()) {
+            Logger::Error("Export timeout after 10 seconds");
+            ShowError("导出超时!\n\n处理时间超过10秒，请重试");
+            return;
+        }
+        
+        // ✅ 显示导出结果（使用独立的对话框）
+        if (exportSuccess) {
+            std::string message = "文件名: " + currentImage.fileName + "\n";
+            message += "保存到: " + savePath + "\n\n";
+            
+            // 显示应用的处理信息
+            if (task.usePreprocessed) {
+                message += "已应用: 图像编辑\n";
+            }
+            if (currentImage.transformState.hasTransform) {
+                message += "已应用: 变换调整\n";
+            }
+            message += "已应用: 画布裁剪 (" + std::to_string(m_ProcessConfig.canvas.width) + 
+                       "x" + std::to_string(m_ProcessConfig.canvas.height) + ")";
+            
+            Logger::Info("Export successful: " + savePath);
+            ShowExportComplete(message);
+        } else {
+            Logger::Error("Export failed: " + errorMessage);
+            ShowError("导出失败!\n\n" + errorMessage + "\n\n请检查:\n- 文件路径是否有效\n- 是否有写入权限\n- 磁盘空间是否充足");
+        }
+        
+        Logger::Info("=== ExportCurrentImage() completed ===");
+    } catch (const std::exception& e) {
+        Logger::Error("Exception in ExportCurrentImage(): " + std::string(e.what()));
+        ShowError("导出图片时发生异常!\n\n" + std::string(e.what()));
+    } catch (...) {
+        Logger::Error("Unknown exception in ExportCurrentImage()");
+        ShowError("导出图片时发生未知错误!\n请重试");
     }
 }
 
@@ -976,6 +1185,15 @@ void MainUI::RenderTransformSection(Canvas& canvas) {
             // 应用画布设置
             m_ProcessConfig.canvas = m_TempCanvas;
             m_CanvasApplied = true;
+            
+            // 保存应用画布之后的状态快照
+            StateSnapshot snapshot = CaptureCurrentState();
+            
+            // 记录到全局操作历史
+            m_GlobalHistory.Push(
+                "应用画布: " + std::to_string(m_TempCanvas.width) + "x" + std::to_string(m_TempCanvas.height),
+                [this, snapshot]() { RestoreState(snapshot); }
+            );
         }
         ImGui::SetWindowFontScale(1.0f);
         
@@ -997,6 +1215,41 @@ void MainUI::RenderTransformSection(Canvas& canvas) {
             ImGui::PopStyleColor();
         }
         ImGui::SetWindowFontScale(1.0f);
+        
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        // ✅ 导出当前图片按钮
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        
+        bool canExport = (m_CurrentImageIndex >= 0 && m_CurrentImageIndex < static_cast<int>(m_ImageList.size()));
+        ImGui::BeginDisabled(!canExport);
+        
+        ImGui::SetWindowFontScale(1.1f);
+        if (ImGui::Button("导出当前图片", ImVec2(-1, 50))) {
+            ExportCurrentImage();
+        }
+        ImGui::SetWindowFontScale(1.0f);
+        
+        ImGui::EndDisabled();
+        
+        ImGui::PopStyleColor(4);
+        
+        if (!canExport && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::BeginTooltip();
+            ImGui::SetWindowFontScale(1.1f);
+            ImGui::Text("请先在图片列表中选择一张图片");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::EndTooltip();
+        }
         
         ImGui::Spacing();
         ImGui::Spacing();
@@ -1251,6 +1504,21 @@ void MainUI::ShowBatchProcessComplete(const std::string& message) {
     }
 }
 
+void MainUI::ShowExportComplete(const std::string& message) {
+    try {
+        Logger::Info("ShowExportComplete() called with message: " + message);
+        m_ShowExportComplete = true;
+        m_ExportCompleteMessage = message;
+        m_ExportCompletePopupOpened = false;  // 重置状态
+        PlaySystemSound(true);
+        Logger::Debug("Export complete dialog shown");
+    } catch (const std::exception& e) {
+        Logger::Error("Exception in ShowExportComplete(): " + std::string(e.what()));
+    } catch (...) {
+        Logger::Error("Unknown exception in ShowExportComplete()");
+    }
+}
+
 void MainUI::RenderBatchProcessCompleteDialog() {
     try {
         if (!m_ShowBatchProcessComplete) return;
@@ -1295,5 +1563,97 @@ void MainUI::RenderBatchProcessCompleteDialog() {
     } catch (...) {
         Logger::Error("Unknown exception in RenderBatchProcessCompleteDialog()");
     }
+}
+
+void MainUI::RenderExportCompleteDialog() {
+    try {
+        if (!m_ShowExportComplete) return;
+
+        // 第一次显示时打开 popup
+        if (!m_ExportCompletePopupOpened) {
+            ImGui::OpenPopup("导出完成##ExportComplete");
+            m_ExportCompletePopupOpened = true;
+            Logger::Debug("Opening export complete dialog popup");
+        }
+
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(550, 280), ImGuiCond_Appearing);
+
+        if (ImGui::BeginPopupModal("导出完成##ExportComplete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            // 显示成功标志（更大的字体）
+            ImGui::SetWindowFontScale(1.3f);
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.3f, 1.0f), "[OK] 导出成功!");
+            ImGui::SetWindowFontScale(1.0f);
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::Spacing();
+
+            // 显示导出信息（增大字体）
+            ImGui::SetWindowFontScale(1.1f);
+            ImGui::TextWrapped("%s", m_ExportCompleteMessage.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            
+            ImGui::Spacing();
+            ImGui::Spacing();
+            ImGui::Spacing();
+
+            // 完成按钮（居中，增大尺寸）
+            ImVec2 buttonSize(120, 45);
+            float buttonX = (ImGui::GetWindowWidth() - buttonSize.x) / 2;
+            ImGui::SetCursorPosX(buttonX);
+            
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.25f, 1.0f));
+            
+            ImGui::SetWindowFontScale(1.15f);
+            if (ImGui::Button("完成", buttonSize)) {
+                m_ShowExportComplete = false;
+                m_ExportCompletePopupOpened = false;
+                ImGui::CloseCurrentPopup();
+                Logger::Debug("Export complete dialog closed by user");
+            }
+            ImGui::SetWindowFontScale(1.0f);
+            
+            ImGui::PopStyleColor(3);
+
+            ImGui::EndPopup();
+        }
+    } catch (const std::exception& e) {
+        Logger::Error("Exception in RenderExportCompleteDialog(): " + std::string(e.what()));
+    } catch (...) {
+        Logger::Error("Unknown exception in RenderExportCompleteDialog()");
+    }
+}
+
+MainUI::StateSnapshot MainUI::CaptureCurrentState() const {
+    StateSnapshot snapshot;
+    snapshot.imageList = m_ImageList;
+    snapshot.currentImageIndex = m_CurrentImageIndex;
+    snapshot.processConfig = m_ProcessConfig;
+    snapshot.canvasApplied = m_CanvasApplied;
+    snapshot.tempCanvas = m_TempCanvas;
+    snapshot.outputDirectory = m_OutputDirectory;
+    return snapshot;
+}
+
+void MainUI::RestoreState(const StateSnapshot& snapshot) {
+    m_ImageList = snapshot.imageList;
+    m_CurrentImageIndex = snapshot.currentImageIndex;
+    m_ProcessConfig = snapshot.processConfig;
+    m_CanvasApplied = snapshot.canvasApplied;
+    m_TempCanvas = snapshot.tempCanvas;
+    m_OutputDirectory = snapshot.outputDirectory;
+    
+    // 清除 PreviewPanel 的图像缓存，强制重新加载
+    if (m_PreviewPanel) {
+        m_PreviewPanel->ClearCache();
+    }
+    
+    Logger::Info("State restored: " + std::to_string(m_ImageList.size()) + " images, " +
+                 "canvas applied: " + (m_CanvasApplied ? "yes" : "no"));
 }
 

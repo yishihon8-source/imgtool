@@ -71,6 +71,16 @@ set(PROJECT_SOURCES
     ${CMAKE_SOURCE_DIR}/src/core/OutOfBoundsRenderer.h
     ${CMAKE_SOURCE_DIR}/src/core/ImageHistory.cpp
     ${CMAKE_SOURCE_DIR}/src/core/ImageHistory.h
+    ${CMAKE_SOURCE_DIR}/src/core/TileImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/TileImage.h
+    ${CMAKE_SOURCE_DIR}/src/core/TileHistorySystem.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/TileHistorySystem.h
+    ${CMAKE_SOURCE_DIR}/src/core/TileImageHistory.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/TileImageHistory.h
+    ${CMAKE_SOURCE_DIR}/src/core/HistoryPerformanceTest.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/HistoryPerformanceTest.h
+    ${CMAKE_SOURCE_DIR}/src/core/GlobalHistory.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/GlobalHistory.h
     ${CMAKE_SOURCE_DIR}/src/core/Types.h
     ${CMAKE_SOURCE_DIR}/src/task/BatchProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/task/BatchProcessor.h
@@ -86,6 +96,8 @@ set(PROJECT_SOURCES
     ${CMAKE_SOURCE_DIR}/src/ui/PreviewPanel.h
     ${CMAKE_SOURCE_DIR}/src/ui/SettingsPanel.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/SettingsPanel.h
+    ${CMAKE_SOURCE_DIR}/src/ui/HistoryPanel.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/HistoryPanel.h
     ${CMAKE_SOURCE_DIR}/src/utils/FileDialog.cpp
     ${CMAKE_SOURCE_DIR}/src/utils/FileDialog.h
     ${CMAKE_SOURCE_DIR}/src/utils/Logger.cpp
@@ -131,11 +143,10 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
     )
-    # 隐藏控制台窗口（所有模式）
-    # ✅ 临时注释以便调试输出到控制台
-    # set_target_properties(${PROJECT_NAME} PROPERTIES
-    #     WIN32_EXECUTABLE TRUE
-    # )
+    # 隐藏控制台窗口（Release 模式）
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
     
     # 添加应用程序图标
     if(EXISTS ${CMAKE_SOURCE_DIR}/resources/app.rc)

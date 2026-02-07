@@ -96,6 +96,13 @@ public:
      * @brief 获取历史记录描述列表（用于 UI 显示）
      */
     std::vector<std::string> GetHistoryDescriptions() const;
+    
+    /**
+     * @brief 获取指定索引的历史记录描述
+     * @param index 历史记录索引
+     * @return 描述字符串，如果索引无效返回空字符串
+     */
+    std::string GetDescription(int index) const;
 
 private:
     std::vector<ImageHistoryEntry> m_History;  // 历史记录栈

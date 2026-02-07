@@ -155,6 +155,26 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
             m_SelectionSystem.ClearSelection();
             m_HasSelection = false;
         }
+        
+        // ✅ 方向键移动选区（PS 风格）
+        const float moveStep = 1.0f;  // 每次移动1像素（画布逻辑坐标）
+        const float fastMoveStep = 10.0f;  // 按住 Shift 时快速移动10像素
+        
+        bool shiftPressed = io.KeyShift;
+        float step = shiftPressed ? fastMoveStep : moveStep;
+        
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+            m_SelectionSystem.MoveSelectionByOffset(-step, 0.0f);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+            m_SelectionSystem.MoveSelectionByOffset(step, 0.0f);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            m_SelectionSystem.MoveSelectionByOffset(0.0f, -step);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            m_SelectionSystem.MoveSelectionByOffset(0.0f, step);
+        }
     }
     
     // 选区模式下的 Undo/Redo（Ctrl+Z / Ctrl+Y）
@@ -655,10 +675,27 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
             
             // 更新并渲染对齐辅助线（仅在拖拽图片时）
             if (m_IsDraggingImage) {
-                // 计算图片中心在画布逻辑坐标系中的位置（使用 PS 矩形模型）
+                // ✅ 计算有效内容的中心（如果有有效边界，使用有效内容中心；否则使用变换矩形中心）
                 ImVec2 imageCenter;
-                imageCenter.x = static_cast<float>(m_TransformRect.GetCenterX());
-                imageCenter.y = static_cast<float>(m_TransformRect.GetCenterY());
+                
+                if (m_ValidContentBounds.isValid) {
+                    // 有有效内容边界，计算有效内容在画布中的中心位置
+                    float validLeft = static_cast<float>(m_TransformRect.left) + 
+                                      m_ValidContentBounds.startX * static_cast<float>(m_TransformRect.GetWidth());
+                    float validTop = static_cast<float>(m_TransformRect.top) + 
+                                     m_ValidContentBounds.startY * static_cast<float>(m_TransformRect.GetHeight());
+                    float validRight = static_cast<float>(m_TransformRect.left) + 
+                                       m_ValidContentBounds.endX * static_cast<float>(m_TransformRect.GetWidth());
+                    float validBottom = static_cast<float>(m_TransformRect.top) + 
+                                        m_ValidContentBounds.endY * static_cast<float>(m_TransformRect.GetHeight());
+                    
+                    imageCenter.x = (validLeft + validRight) * 0.5f;
+                    imageCenter.y = (validTop + validBottom) * 0.5f;
+                } else {
+                    // 没有有效边界，使用变换矩形的中心
+                    imageCenter.x = static_cast<float>(m_TransformRect.GetCenterX());
+                    imageCenter.y = static_cast<float>(m_TransformRect.GetCenterY());
+                }
                 
                 ImVec2 canvasLogicalSize(static_cast<float>(config.canvas.width), static_cast<float>(config.canvas.height));
                 
@@ -1024,12 +1061,11 @@ bool PreviewPanel::LoadCurrentImage(const std::string& filePath) {
 
         // ✅ 1. 先保存当前图片到缓存（如果有修改或有历史记录）
         if (!m_CurrentImagePath.empty() && m_CurrentImage.IsValid()) {
-            ImageCache cache;
+            auto& cache = m_ImageCache[m_CurrentImagePath];
             cache.imageData = m_CurrentImage;
             cache.modified = m_ImageModified;
             cache.history = m_ImageHistory;  // ✅ 保存历史记录
             cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
-            m_ImageCache[m_CurrentImagePath] = cache;
             printf("[LoadImage] Saved image to cache: %s (modified=%d, history_count=%zu)\n", 
                    m_CurrentImagePath.c_str(), m_ImageModified, m_ImageHistory.GetHistoryCount());
         }
@@ -1724,12 +1760,11 @@ bool PreviewPanel::DeleteSelectionContent(const ProcessConfig& config) {
     
     // ✅ 同步更新缓存（确保缓存与当前状态一致）
     if (!m_CurrentImagePath.empty()) {
-        ImageCache cache;
+        auto& cache = m_ImageCache[m_CurrentImagePath];
         cache.imageData = m_CurrentImage;
         cache.modified = true;
         cache.history = m_ImageHistory;  // ✅ 保存历史记录
         cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
-        m_ImageCache[m_CurrentImagePath] = cache;
         printf("Cache updated for: %s\n", m_CurrentImagePath.c_str());
     }
     
@@ -1856,12 +1891,11 @@ bool PreviewPanel::Undo() {
     
     // ✅ 同步更新缓存（确保缓存与当前状态一致）
     if (!m_CurrentImagePath.empty()) {
-        ImageCache cache;
+        auto& cache = m_ImageCache[m_CurrentImagePath];
         cache.imageData = m_CurrentImage;
         cache.modified = true;
         cache.history = m_ImageHistory;  // ✅ 保存历史记录
         cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
-        m_ImageCache[m_CurrentImagePath] = cache;
         printf("[Undo] Updated cache for: %s\n", m_CurrentImagePath.c_str());
     }
     
@@ -1941,12 +1975,11 @@ bool PreviewPanel::Redo() {
     
     // ✅ 同步更新缓存（确保缓存与当前状态一致）
     if (!m_CurrentImagePath.empty()) {
-        ImageCache cache;
+        auto& cache = m_ImageCache[m_CurrentImagePath];
         cache.imageData = m_CurrentImage;
         cache.modified = true;
         cache.history = m_ImageHistory;  // ✅ 保存历史记录
         cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
-        m_ImageCache[m_CurrentImagePath] = cache;
         printf("[Redo] Updated cache for: %s\n", m_CurrentImagePath.c_str());
     }
     
@@ -1954,5 +1987,21 @@ bool PreviewPanel::Redo() {
     printf("======================\n\n");
     
     return true;
+}
+
+
+void PreviewPanel::ClearCache() {
+    // 只重置当前显示状态，保留缓存中的历史记录
+    // 这样全局历史恢复时不会丢失图像编辑历史
+    
+    // 重置当前图像状态
+    m_CurrentImagePath.clear();
+    m_ImageModified = false;
+    m_LastImageIndex = -1;
+    
+    // 释放纹理（强制重新加载）
+    ReleaseTexture();
+    
+    printf("[ClearCache] Current display state cleared (cache preserved).\n");
 }
 
