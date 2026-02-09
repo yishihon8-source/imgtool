@@ -194,6 +194,34 @@ bool ImageLoader::SavePNG(const std::string& filePath, const ImageData& data) {
         return false;
     }
 
+#ifdef _WIN32
+    // Windows 上使用宽字符路径来支持中文文件名
+    std::wstring wpath = fs::path(filePath).wstring();
+    
+    // 使用 _wfopen 打开文件
+    FILE* file = _wfopen(wpath.c_str(), L"wb");
+    if (!file) {
+        std::cerr << "Failed to open file for writing: " << filePath << std::endl;
+        return false;
+    }
+    
+    // 使用 stbi_write_png_to_func 写入文件
+    auto writeFunc = [](void* context, void* data, int size) {
+        fwrite(data, 1, size, (FILE*)context);
+    };
+    
+    int result = stbi_write_png_to_func(
+        writeFunc,
+        file,
+        data.width,
+        data.height,
+        data.channels,
+        data.pixels.data(),
+        data.width * data.channels
+    );
+    
+    fclose(file);
+#else
     int result = stbi_write_png(
         filePath.c_str(),
         data.width,
@@ -202,6 +230,7 @@ bool ImageLoader::SavePNG(const std::string& filePath, const ImageData& data) {
         data.pixels.data(),
         data.width * data.channels
     );
+#endif
 
     if (!result) {
         std::cerr << "Failed to save PNG: " << filePath << std::endl;
@@ -233,6 +262,35 @@ bool ImageLoader::SaveJPG(const std::string& filePath, const ImageData& data, in
     }
 
     int channels = (data.channels == 4) ? 3 : data.channels;
+    
+#ifdef _WIN32
+    // Windows 上使用宽字符路径来支持中文文件名
+    std::wstring wpath = fs::path(filePath).wstring();
+    
+    // 使用 _wfopen 打开文件
+    FILE* file = _wfopen(wpath.c_str(), L"wb");
+    if (!file) {
+        std::cerr << "Failed to open file for writing: " << filePath << std::endl;
+        return false;
+    }
+    
+    // 使用 stbi_write_jpg_to_func 写入文件
+    auto writeFunc = [](void* context, void* data, int size) {
+        fwrite(data, 1, size, (FILE*)context);
+    };
+    
+    int result = stbi_write_jpg_to_func(
+        writeFunc,
+        file,
+        data.width,
+        data.height,
+        channels,
+        pixelData,
+        quality
+    );
+    
+    fclose(file);
+#else
     int result = stbi_write_jpg(
         filePath.c_str(),
         data.width,
@@ -241,6 +299,7 @@ bool ImageLoader::SaveJPG(const std::string& filePath, const ImageData& data, in
         pixelData,
         quality
     );
+#endif
 
     if (!result) {
         std::cerr << "Failed to save JPG: " << filePath << std::endl;

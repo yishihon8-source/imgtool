@@ -8,6 +8,9 @@
 #include "core/OutOfBoundsRenderer.h"
 #include "core/ImageHistory.h"
 #include "core/TileImageHistory.h"
+#include "core/CropTool.h"
+#include "core/CropRenderer.h"
+#include "core/CropInteraction.h"
 #include <imgui.h>
 #include <vector>
 #include <map>
@@ -35,13 +38,15 @@ public:
      * @param canvasApplied 画布是否已应用
      * @param transformMode 是否启用变换模式（输入输出）
      * @param selectionMode 是否启用选区模式（输入输出）
+     * @param cropMode 是否启用裁剪模式（输入输出）
      */
     void Render(std::vector<ImageInfo>& imageList, 
                 int currentIndex,
                 ProcessConfig& config,
                 bool canvasApplied,
                 bool& transformMode,
-                bool& selectionMode);
+                bool& selectionMode,
+                bool& cropMode);
     
     /**
      * @brief 保存当前图片的变换状态（供外部调用）
@@ -166,6 +171,12 @@ private:
     bool m_HasSelection = false;                        // 是否有活动选区
     OutOfBoundsRenderer m_OutOfBoundsRenderer;          // 选区越界警告线渲染器
     
+    // 裁剪工具（Crop Tool）
+    bool m_CropMode = false;                            // 是否在裁剪模式
+    CropTool m_CropTool;                                // 裁剪工具
+    CropRenderer m_CropRenderer;                        // 裁剪渲染器
+    CropInteraction m_CropInteraction;                  // 裁剪交互
+    
     // 图像历史记录（撤销/重做）
     ImageHistory m_ImageHistory;                        // 历史记录管理器（旧系统）
     std::unique_ptr<TileImageHistory> m_TileImageHistory;  // Tile-based 历史记录（新系统）
@@ -246,6 +257,27 @@ private:
      * - 删除后选区仍然保留
      */
     bool DeleteSelectionContent(const ProcessConfig& config);
+    
+    /**
+     * @brief 应用裁剪到当前图片（不影响其他图片）
+     * 
+     * 行为：
+     * - 只裁剪当前显示的图片
+     * - 不修改全局 ProcessConfig
+     * - 裁剪后的图片保存在缓存中
+     * - 支持撤销/重做
+     */
+    void ApplyCropToCurrentImage();
+    
+    /**
+     * @brief 应用变换到当前图片（Ctrl+T 确认时调用）
+     * 
+     * 行为：
+     * - 根据变换矩形重新采样图像
+     * - 支持撤销/重做
+     * - 变换后图像尺寸保持不变（画布尺寸）
+     */
+    void ApplyTransformToCurrentImage(const ProcessConfig& config);
     
     // 当前图片索引（用于跟踪切换）
     int m_LastImageIndex = -1;

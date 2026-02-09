@@ -81,6 +81,12 @@ set(PROJECT_SOURCES
     ${CMAKE_SOURCE_DIR}/src/core/HistoryPerformanceTest.h
     ${CMAKE_SOURCE_DIR}/src/core/GlobalHistory.cpp
     ${CMAKE_SOURCE_DIR}/src/core/GlobalHistory.h
+    ${CMAKE_SOURCE_DIR}/src/core/CropTool.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/CropTool.h
+    ${CMAKE_SOURCE_DIR}/src/core/CropRenderer.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/CropRenderer.h
+    ${CMAKE_SOURCE_DIR}/src/core/CropInteraction.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/CropInteraction.h
     ${CMAKE_SOURCE_DIR}/src/core/Types.h
     ${CMAKE_SOURCE_DIR}/src/task/BatchProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/task/BatchProcessor.h

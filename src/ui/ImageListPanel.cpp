@@ -248,20 +248,89 @@ void ImageListPanel::Render(std::vector<ImageInfo>& imageList, int& currentIndex
     // 删除确认对话框 - 居中显示
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Appearing);
     
-    if (ImGui::BeginPopupModal("DeleteConfirmDialog", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("确定要删除这张图片吗？");
+    // 美化删除确认对话框
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.9f, 0.5f, 0.3f, 0.8f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    
+    if (ImGui::BeginPopupModal("DeleteConfirmDialog", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        // 标题区域
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.4f, 1.0f));
+        ImGui::SetWindowFontScale(1.3f);
+        ImGui::Text("删除确认");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+        ImGui::Separator();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
         ImGui::Spacing();
         
+        // 提示文字
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+        ImGui::SetWindowFontScale(1.05f);
+        ImGui::Text("确定要删除这张图片吗？");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        
+        // 文件名显示
         if (m_RenamingIndex >= 0 && m_RenamingIndex < static_cast<int>(imageList.size())) {
-            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), "%s", imageList[m_RenamingIndex].fileName.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.5f, 1.0f));
+            ImGui::SetWindowFontScale(1.05f);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 430);
+            ImGui::TextWrapped("%s", imageList[m_RenamingIndex].fileName.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
         }
         
         ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
         ImGui::Separator();
+        ImGui::PopStyleColor();
         ImGui::Spacing();
         
-        if (ImGui::Button("确定", ImVec2(120, 0))) {
+        // 按钮区域 - 右对齐
+        float buttonWidth = 90.0f;
+        float spacing = 12.0f;
+        float totalWidth = buttonWidth * 2 + spacing;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - totalWidth - 24);
+        
+        // 取消按钮
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.28f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.24f, 0.24f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+        
+        if (ImGui::Button("取消", ImVec2(buttonWidth, 36)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_RenamingIndex = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
+        
+        ImGui::SameLine();
+        
+        // 确定按钮 - 红色警告
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        
+        if (ImGui::Button("删除", ImVec2(buttonWidth, 36))) {
             // 执行删除
             if (m_RenamingIndex >= 0 && m_RenamingIndex < static_cast<int>(imageList.size())) {
                 // 清理该图片的缩略图纹理
@@ -293,23 +362,40 @@ void ImageListPanel::Render(std::vector<ImageInfo>& imageList, int& currentIndex
             ImGui::CloseCurrentPopup();
         }
         
-        ImGui::SameLine();
-        
-        if (ImGui::Button("取消", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            m_RenamingIndex = -1;
-            ImGui::CloseCurrentPopup();
-        }
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
         
         ImGui::EndPopup();
     }
+    
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
     
     // 重命名对话框（模态窗口）- 居中显示
     center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     
-    if (ImGui::BeginPopupModal("RenameDialog", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+    // 美化重命名对话框 - 现代卡片风格
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.6f, 0.9f, 0.8f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    
+    if (ImGui::BeginPopupModal("RenameDialog", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        // 标题区域
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+        ImGui::SetWindowFontScale(1.3f);
         ImGui::Text("重命名文件");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
         ImGui::Separator();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
         ImGui::Spacing();
         
         // 首次打开时设置焦点
@@ -317,13 +403,61 @@ void ImageListPanel::Render(std::vector<ImageInfo>& imageList, int& currentIndex
             ImGui::SetKeyboardFocusHere();
         }
         
-        ImGui::SetNextItemWidth(300);
+        // 输入框 - 现代风格
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.20f, 0.20f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+        
+        ImGui::SetNextItemWidth(400);
+        ImGui::SetWindowFontScale(1.05f);
         bool enterPressed = ImGui::InputText("##RenameInput", m_RenameBuffer, sizeof(m_RenameBuffer), 
                                               ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::SetWindowFontScale(1.0f);
+        
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(2);
         
         ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+        ImGui::Separator();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
         
-        if (ImGui::Button("确定", ImVec2(140, 0)) || enterPressed) {
+        // 按钮区域 - 右对齐
+        float buttonWidth = 90.0f;
+        float spacing = 12.0f;
+        float totalWidth = buttonWidth * 2 + spacing;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - totalWidth - 24);
+        
+        // 取消按钮
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.28f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.24f, 0.24f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+        
+        if (ImGui::Button("取消", ImVec2(buttonWidth, 36)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_RenamingIndex = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
+        
+        ImGui::SameLine();
+        
+        // 确定按钮 - 蓝色强调
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.69f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.50f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        
+        if (ImGui::Button("确定", ImVec2(buttonWidth, 36)) || enterPressed) {
             // 确认重命名
             if (m_RenamingIndex >= 0 && m_RenamingIndex < static_cast<int>(imageList.size())) {
                 std::string newName = m_RenameBuffer;
@@ -347,15 +481,14 @@ void ImageListPanel::Render(std::vector<ImageInfo>& imageList, int& currentIndex
             ImGui::CloseCurrentPopup();
         }
         
-        ImGui::SameLine();
-        
-        if (ImGui::Button("取消", ImVec2(140, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            m_RenamingIndex = -1;
-            ImGui::CloseCurrentPopup();
-        }
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
         
         ImGui::EndPopup();
     }
+    
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
     
     // 双击触发重命名对话框
     if (m_DoubleClickTriggered) {
@@ -366,27 +499,84 @@ void ImageListPanel::Render(std::vector<ImageInfo>& imageList, int& currentIndex
     // 清空确认对话框 - 居中显示
     center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Appearing);
     
-    if (ImGui::BeginPopupModal("ClearAllConfirm", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::SetWindowFontScale(1.1f);
-        ImGui::Text("确定要清空所有素材吗？");
+    // 美化清空确认对话框
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.9f, 0.5f, 0.3f, 0.8f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    
+    if (ImGui::BeginPopupModal("ClearAllConfirm", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        // 标题区域
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.4f, 1.0f));
+        ImGui::SetWindowFontScale(1.3f);
+        ImGui::Text("清空确认");
         ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+        ImGui::Separator();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
         ImGui::Spacing();
         
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
+        // 提示文字
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+        ImGui::SetWindowFontScale(1.05f);
+        ImGui::Text("确定要清空所有素材吗？");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        
+        ImGui::Spacing();
+        
+        // 数量显示
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.5f, 1.0f));
         ImGui::SetWindowFontScale(1.05f);
         ImGui::Text("共 %d 张图片将被移除", static_cast<int>(imageList.size()));
         ImGui::SetWindowFontScale(1.0f);
         ImGui::PopStyleColor();
         
         ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
         ImGui::Separator();
+        ImGui::PopStyleColor();
         ImGui::Spacing();
         
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.4f, 0.4f, 1.0f));
+        // 按钮区域 - 右对齐
+        float buttonWidth = 100.0f;
+        float spacing = 12.0f;
+        float totalWidth = buttonWidth * 2 + spacing;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - totalWidth - 24);
         
-        if (ImGui::Button("确定清空", ImVec2(120, 0))) {
+        // 取消按钮
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.28f, 0.28f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.24f, 0.24f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
+        
+        if (ImGui::Button("取消", ImVec2(buttonWidth, 36)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
+        
+        ImGui::SameLine();
+        
+        // 确定清空按钮 - 红色警告
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        
+        if (ImGui::Button("清空", ImVec2(buttonWidth, 36))) {
             // 执行清空
             if (onClearAll) {
                 onClearAll();
@@ -394,16 +584,14 @@ void ImageListPanel::Render(std::vector<ImageInfo>& imageList, int& currentIndex
             ImGui::CloseCurrentPopup();
         }
         
-        ImGui::PopStyleColor(2);
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("取消", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            ImGui::CloseCurrentPopup();
-        }
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
         
         ImGui::EndPopup();
     }
+    
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
 
     ImGui::End();
 }

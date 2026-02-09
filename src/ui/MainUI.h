@@ -197,7 +197,8 @@ private:
     enum class ToolMode {
         None,
         Transform,  // 变换工具
-        Selection   // 矩形选框工具
+        Selection,  // 矩形选框工具
+        Crop        // 裁剪工具
     };
     ToolMode m_CurrentTool = ToolMode::None;
     

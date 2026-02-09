@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <iostream>
+#include <array>
 
 // OpenGL
 #ifdef _WIN32
@@ -29,7 +30,8 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
                            ProcessConfig& config,
                            bool canvasApplied,
                            bool& transformMode,
-                           bool& selectionMode) {
+                           bool& selectionMode,
+                           bool& cropMode) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("画布", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleVar();
@@ -37,19 +39,34 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
     // 保存输入状态
     bool inputTransformMode = transformMode;
     bool inputSelectionMode = selectionMode;
+    bool inputCropMode = cropMode;
     
     // 检测外部是否主动改变了状态（比如点击工具栏按钮）
     // 只有当外部状态与上一帧的输出状态不同时，才认为是外部主动改变
     static bool lastOutputTransformMode = false;
     static bool lastOutputSelectionMode = false;
+    static bool lastOutputCropMode = false;
     
     bool externalChange = (inputTransformMode != lastOutputTransformMode) || 
-                          (inputSelectionMode != lastOutputSelectionMode);
+                          (inputSelectionMode != lastOutputSelectionMode) ||
+                          (inputCropMode != lastOutputCropMode);
     
     // 只在外部主动改变时才同步到内部（避免每帧覆盖）
     if (externalChange) {
         m_TransformMode = transformMode;
         m_SelectionMode = selectionMode;
+        m_CropMode = cropMode;
+        
+        // 激活/取消激活裁剪工具
+        if (m_CropMode && !m_CropTool.IsActive()) {
+            // ✅ 使用当前图片的实际尺寸
+            int cropCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width;
+            int cropCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height;
+            m_CropTool.Activate(cropCanvasWidth, cropCanvasHeight);
+            printf("[Crop] Activated crop tool (external) with canvas size: %d x %d\n", cropCanvasWidth, cropCanvasHeight);
+        } else if (!m_CropMode && m_CropTool.IsActive()) {
+            m_CropTool.Deactivate();
+        }
     }
 
     // Ctrl+T 切换变换模式（全局快捷键，不需要窗口焦点）
@@ -58,7 +75,7 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
     bool ctrlPressed = io.KeyCtrl;
     bool tPressed = ImGui::IsKeyPressed(ImGuiKey_T, false);
     
-    if (ctrlPressed && tPressed) {
+    if (ctrlPressed && tPressed && !m_CropMode) {
         if (!m_TransformMode) {
             // ✅ 进入变换模式
             m_TransformMode = true;
@@ -71,12 +88,54 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
         }
     }
     
+    // C 键切换裁剪模式（Photoshop 快捷键）
+    if (ImGui::IsKeyPressed(ImGuiKey_C, false) && !ctrlPressed && !m_TransformMode && !m_SelectionMode) {
+        m_CropMode = !m_CropMode;
+        
+        if (m_CropMode) {
+            // ✅ 激活裁剪工具：使用当前图片的实际尺寸，而不是全局画布配置
+            int cropCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width;
+            int cropCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height;
+            m_CropTool.Activate(cropCanvasWidth, cropCanvasHeight);
+            printf("[Crop] Activated crop tool with canvas size: %d x %d\n", cropCanvasWidth, cropCanvasHeight);
+        } else {
+            // 取消激活
+            m_CropTool.Deactivate();
+        }
+    }
+    
     // M 键切换选区模式（类似 PS 的选框工具）
-    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !m_TransformMode) {
+    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !m_TransformMode && !m_CropMode) {
         m_SelectionMode = !m_SelectionMode;
         if (!m_SelectionMode) {
             m_HasSelection = false;
         }
+    }
+    
+    // 裁剪模式下的快捷键
+    if (m_CropMode) {
+        // Enter 确认裁剪
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+            // ✅ 应用裁剪到当前图片（不修改全局配置）
+            if (m_CropTool.ApplyCrop(config)) {
+                ApplyCropToCurrentImage();
+                m_CropMode = false;
+                m_CropTool.Deactivate();
+                printf("[Crop] Crop applied to current image successfully\n");
+            }
+        }
+        
+        // ESC 取消裁剪
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_CropMode = false;
+            m_CropTool.Deactivate();
+            printf("[Crop] Crop cancelled\n");
+        }
+        
+        // 方向键移动裁剪框（使用当前图片的实际尺寸）
+        int cropCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width;
+        int cropCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height;
+        m_CropInteraction.HandleKeyboardInput(m_CropTool, cropCanvasWidth, cropCanvasHeight);
     }
     
     // ✅ Delete / Backspace 删除选区内容（PS 风格）
@@ -105,9 +164,9 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
     if (m_TransformMode) {
         // Enter 确认变换
         if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
-            // ✅ 确认变换：保持当前的变换矩形状态
+            // ✅ 确认变换：应用变换到图像数据
+            ApplyTransformToCurrentImage(config);
             m_TransformMode = false;
-            // 变换矩形状态已经保存在 m_TransformRect 中，会在切换图片时自动保存
         }
         
         // ESC 取消变换
@@ -144,7 +203,7 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
     
     // 选区模式下的快捷键（需要在渲染前处理，以便传递正确的图片边界）
     bool shouldEraseSelection = false;
-    if (m_SelectionMode && m_HasSelection) {
+    if (m_SelectionMode && m_HasSelection && !m_CropMode) {
         // Backspace 或 Delete 擦除选区
         if (ImGui::IsKeyPressed(ImGuiKey_Backspace) || ImGui::IsKeyPressed(ImGuiKey_Delete)) {
             shouldEraseSelection = true;
@@ -356,8 +415,16 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
         ImGui::PopStyleColor();
     }
     
+    // 显示裁剪模式提示
+    if (m_CropMode) {
+        ImGui::SetCursorPos(ImVec2(10, 10));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 0.3f, 1.0f));
+        ImGui::Text("裁剪模式 | Enter: 应用裁剪 | ESC: 取消 | 方向键: 移动 | Shift: 保持比例 | C: 退出");
+        ImGui::PopStyleColor();
+    }
+    
     // 显示选区模式提示
-    if (m_SelectionMode) {
+    if (m_SelectionMode && !m_CropMode) {
         ImGui::SetCursorPos(ImVec2(10, 10));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
         if (m_HasSelection) {
@@ -369,14 +436,16 @@ void PreviewPanel::Render(std::vector<ImageInfo>& imageList,
     }
 
     // 同步状态回 MainUI（只在状态真正改变时才同步）
-    if (m_TransformMode != inputTransformMode || m_SelectionMode != inputSelectionMode) {
+    if (m_TransformMode != inputTransformMode || m_SelectionMode != inputSelectionMode || m_CropMode != inputCropMode) {
         transformMode = m_TransformMode;
         selectionMode = m_SelectionMode;
+        cropMode = m_CropMode;
     }
     
     // 保存输出状态供下一帧使用
     lastOutputTransformMode = m_TransformMode;
     lastOutputSelectionMode = m_SelectionMode;
+    lastOutputCropMode = m_CropMode;
 
     ImGui::End();
 }
@@ -423,7 +492,11 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
     }
 
     // 计算画布显示尺寸（应用缩放，保持画布比例，居中显示）
-    float canvasAspect = static_cast<float>(config.canvas.width) / config.canvas.height;
+    // ✅ 使用当前图片的实际尺寸，而不是全局画布配置
+    int actualCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width;
+    int actualCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height;
+    
+    float canvasAspect = static_cast<float>(actualCanvasWidth) / actualCanvasHeight;
     float padding = 0.0f;
     
     float maxWidth = windowSize.x - padding * 2;
@@ -454,8 +527,8 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
         ImVec2 mousePos = ImGui::GetMousePos();
         
         // 将鼠标位置转换为画布逻辑坐标
-        double mouseLogicalX = (mousePos.x - canvasX) / (canvasDisplayWidth / config.canvas.width);
-        double mouseLogicalY = (mousePos.y - canvasY) / (canvasDisplayHeight / config.canvas.height);
+        double mouseLogicalX = (mousePos.x - canvasX) / (canvasDisplayWidth / actualCanvasWidth);
+        double mouseLogicalY = (mousePos.y - canvasY) / (canvasDisplayHeight / actualCanvasHeight);
         
         // 计算鼠标相对于矩形中心的向量
         double centerX = m_TransformRect.GetCenterX();
@@ -504,42 +577,52 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
         float targetWidth = 0.0f;
         float targetHeight = 0.0f;
         
-        // 根据 ScaleMode 计算基础目标尺寸（未变换）
-        switch (config.scaleMode) {
-            case ScaleMode::Fit: {
-                // 适应：保持比例，完整显示
-                if (imageAspect > canvasAspect) {
-                    targetWidth = static_cast<float>(config.canvas.width);
-                    targetHeight = targetWidth / imageAspect;
-                } else {
-                    targetHeight = static_cast<float>(config.canvas.height);
-                    targetWidth = targetHeight * imageAspect;
+        // ✅ 裁剪后的图片应该 1:1 显示，不再应用 ScaleMode
+        // 如果图片尺寸等于画布尺寸，说明是裁剪后的图片，直接 1:1 显示
+        bool isCroppedImage = (m_TextureWidth == actualCanvasWidth && m_TextureHeight == actualCanvasHeight);
+        
+        if (isCroppedImage) {
+            // 裁剪后的图片：1:1 显示，填满整个画布
+            targetWidth = static_cast<float>(actualCanvasWidth);
+            targetHeight = static_cast<float>(actualCanvasHeight);
+        } else {
+            // 原始图片：根据 ScaleMode 计算基础目标尺寸（未变换）
+            switch (config.scaleMode) {
+                case ScaleMode::Fit: {
+                    // 适应：保持比例，完整显示
+                    if (imageAspect > canvasAspect) {
+                        targetWidth = static_cast<float>(actualCanvasWidth);
+                        targetHeight = targetWidth / imageAspect;
+                    } else {
+                        targetHeight = static_cast<float>(actualCanvasHeight);
+                        targetWidth = targetHeight * imageAspect;
+                    }
+                    break;
                 }
-                break;
-            }
-            case ScaleMode::Fill: {
-                // 填充：保持比例，填满画布（可能裁剪）
-                if (imageAspect > canvasAspect) {
-                    targetHeight = static_cast<float>(config.canvas.height);
-                    targetWidth = targetHeight * imageAspect;
-                } else {
-                    targetWidth = static_cast<float>(config.canvas.width);
-                    targetHeight = targetWidth / imageAspect;
+                case ScaleMode::Fill: {
+                    // 填充：保持比例，填满画布（可能裁剪）
+                    if (imageAspect > canvasAspect) {
+                        targetHeight = static_cast<float>(actualCanvasHeight);
+                        targetWidth = targetHeight * imageAspect;
+                    } else {
+                        targetWidth = static_cast<float>(actualCanvasWidth);
+                        targetHeight = targetWidth / imageAspect;
+                    }
+                    break;
                 }
-                break;
-            }
-            case ScaleMode::Stretch: {
-                // 拉伸：填满画布，不保持比例
-                targetWidth = static_cast<float>(config.canvas.width);
-                targetHeight = static_cast<float>(config.canvas.height);
-                break;
-            }
-            case ScaleMode::None:
-            default: {
-                // 原始尺寸
-                targetWidth = imageWidth;
-                targetHeight = imageHeight;
-                break;
+                case ScaleMode::Stretch: {
+                    // 拉伸：填满画布，不保持比例
+                    targetWidth = static_cast<float>(actualCanvasWidth);
+                    targetHeight = static_cast<float>(actualCanvasHeight);
+                    break;
+                }
+                case ScaleMode::None:
+                default: {
+                    // 原始尺寸
+                    targetWidth = imageWidth;
+                    targetHeight = imageHeight;
+                    break;
+                }
             }
         }
         
@@ -552,16 +635,49 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
         
         // ✅ PS 模型：如果有有效的变换矩形，始终使用它（无论是否在变换模式）
         float imageX, imageY;
-        if (m_TransformRect.GetWidth() > 0 && m_TransformRect.GetHeight() > 0) {
+        
+        // ✅ 检查变换矩形是否需要重置（裁剪后图片尺寸变了）
+        // ⚠️ 关键修复：在变换模式激活时，禁用自动重置，否则用户的拖拽操作会被覆盖
+        bool needResetTransform = false;
+        if (m_TransformRect.GetWidth() > 0 && m_TransformRect.GetHeight() > 0 && !m_TransformMode) {
+            // 只在非变换模式下检测尺寸不匹配
+            // 如果变换矩形的尺寸与当前目标尺寸差异很大，说明图片被裁剪了，需要重置
+            double widthDiff = std::abs(m_TransformRect.GetWidth() - targetWidth);
+            double heightDiff = std::abs(m_TransformRect.GetHeight() - targetHeight);
+            // ✅ 关键修复：使用相对误差而不是绝对误差，避免小图片误判
+            double widthRatio = targetWidth > 0 ? widthDiff / targetWidth : 0;
+            double heightRatio = targetHeight > 0 ? heightDiff / targetHeight : 0;
+            
+            // ✅ 调试输出：每次检测都打印详细信息
+            static int resetCheckCount = 0;
+            if (resetCheckCount++ % 60 == 0 || widthRatio > 0.05 || heightRatio > 0.05) {
+                printf("\n=== Transform Rect Reset Check ===\n");
+                printf("Transform rect size: %.2f x %.2f\n", m_TransformRect.GetWidth(), m_TransformRect.GetHeight());
+                printf("Target size: %.2f x %.2f\n", targetWidth, targetHeight);
+                printf("Width diff: %.2f, Height diff: %.2f\n", widthDiff, heightDiff);
+                printf("Width ratio: %.4f, Height ratio: %.4f\n", widthRatio, heightRatio);
+                printf("Threshold: 0.05 (5%%)\n");
+                printf("Need reset: %s\n", (widthRatio > 0.05 || heightRatio > 0.05) ? "YES" : "NO");
+                printf("Transform mode: %s\n", m_TransformMode ? "ACTIVE" : "INACTIVE");
+                printf("==================================\n\n");
+            }
+            
+            if (widthRatio > 0.05 || heightRatio > 0.05) {  // 5% 的误差容忍度
+                needResetTransform = true;
+                printf("[Transform] Detected size mismatch, resetting transform rect.\n");
+            }
+        }
+        
+        if (m_TransformRect.GetWidth() > 0 && m_TransformRect.GetHeight() > 0 && !needResetTransform) {
             // 使用 PS 矩形模型（保持变换状态）
             imageX = static_cast<float>(m_TransformRect.left);
             imageY = static_cast<float>(m_TransformRect.top);
             targetWidth = static_cast<float>(m_TransformRect.GetWidth());
             targetHeight = static_cast<float>(m_TransformRect.GetHeight());
         } else {
-            // 默认居中对齐（未变换状态）
-            imageX = (config.canvas.width - targetWidth) * 0.5f;
-            imageY = (config.canvas.height - targetHeight) * 0.5f;
+            // 默认居中对齐（未变换状态）或裁剪后重置
+            imageX = (actualCanvasWidth - targetWidth) * 0.5f;
+            imageY = (actualCanvasHeight - targetHeight) * 0.5f;
             
             // ✅ 初始化变换矩形（无论是否在变换模式，都要初始化以便后续使用）
             m_TransformRect.left = imageX;
@@ -571,7 +687,7 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
         }
         
         // 转换为显示坐标
-        float scale = canvasDisplayWidth / config.canvas.width;
+        float scale = canvasDisplayWidth / actualCanvasWidth;
         float displayImageX = canvasX + imageX * scale;
         float displayImageY = canvasY + imageY * scale;
         float displayImageWidth = targetWidth * scale;
@@ -593,8 +709,8 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
         
         // ✅ 图层边界始终是画布范围，不随图片变换而改变
         ImVec2 layerPixelBounds_Pos(0.0f, 0.0f);  // 图层永远从(0,0)开始
-        ImVec2 layerPixelBounds_Size(static_cast<float>(config.canvas.width), 
-                                      static_cast<float>(config.canvas.height));
+        ImVec2 layerPixelBounds_Size(static_cast<float>(actualCanvasWidth), 
+                                      static_cast<float>(actualCanvasHeight));
         
         // 裁剪到画布范围内（仅用于渲染）
         ImVec2 clippedImageMin = imageMin;
@@ -715,8 +831,44 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
             }
         }
         
+        // ✅ 裁剪模式：处理输入和渲染裁剪框
+        if (m_CropMode && m_CropTool.IsActive()) {
+            // ✅ 使用当前图片的实际尺寸作为画布逻辑尺寸
+            ImVec2 canvasLogicalSize(
+                static_cast<float>(m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width), 
+                static_cast<float>(m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height)
+            );
+            
+            // 处理裁剪交互（鼠标交互）
+            if (ImGui::IsWindowHovered()) {
+                ImVec2 mousePos = ImGui::GetMousePos();
+                bool isMouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                bool isMouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                bool isMouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+                ImGuiIO& io = ImGui::GetIO();
+                bool shiftPressed = io.KeyShift;
+                bool altPressed = io.KeyAlt;
+                
+                // 更新裁剪交互
+                m_CropInteraction.Update(m_CropTool, mousePos, canvasMin, canvasMax, 
+                                        canvasLogicalSize, isMouseDown, isMouseClicked, 
+                                        isMouseReleased, shiftPressed, altPressed);
+            }
+            
+            // 渲染裁剪工具
+            m_CropRenderer.Render(drawList, m_CropTool.GetCropRect(), canvasMin, canvasMax,
+                                 canvasLogicalSize, m_CropTool.IsShowingRuleOfThirds(), 
+                                 m_CropTool.GetState());
+            
+            // 渲染控制点
+            ImVec2 handles[8];
+            m_CropInteraction.CalculateHandlePositions(m_CropTool.GetCropRect(), canvasMin, 
+                                                      canvasMax, canvasLogicalSize, handles);
+            m_CropRenderer.RenderHandles(drawList, handles, m_CropInteraction.GetHoveredHandle());
+        }
+        
         // ✅ 选区模式：处理输入和渲染选区
-        if (m_SelectionMode) {
+        if (m_SelectionMode && !m_CropMode) {
             // 处理选区输入（鼠标交互）
             if (ImGui::IsWindowHovered()) {
                 ImVec2 mousePos = ImGui::GetMousePos();
@@ -753,8 +905,8 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
                     SelectionRect layerBounds;
                     layerBounds.x = 0.0f;  // 画布左上角
                     layerBounds.y = 0.0f;  // 画布左上角
-                    layerBounds.width = static_cast<float>(config.canvas.width);   // 画布宽度
-                    layerBounds.height = static_cast<float>(config.canvas.height); // 画布高度
+                    layerBounds.width = static_cast<float>(actualCanvasWidth);   // 画布宽度
+                    layerBounds.height = static_cast<float>(actualCanvasHeight); // 画布高度
                     layerBounds.active = true;
                     
                     // 调试输出
@@ -844,8 +996,8 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
                 SelectionRect layerBounds;
                 layerBounds.x = 0.0f;
                 layerBounds.y = 0.0f;
-                layerBounds.width = static_cast<float>(config.canvas.width);
-                layerBounds.height = static_cast<float>(config.canvas.height);
+                layerBounds.width = static_cast<float>(actualCanvasWidth);
+                layerBounds.height = static_cast<float>(actualCanvasHeight);
                 layerBounds.active = true;
                 
                 // 渲染选区（使用正确的 scale，而不是 m_CanvasZoom）
@@ -866,7 +1018,7 @@ void PreviewPanel::RenderCanvasStage(const ImageData& image, ProcessConfig& conf
 
     // 底部尺寸标签（显示缩放比例）
     char sizeText[64];
-    snprintf(sizeText, sizeof(sizeText), "%d×%d (%.0f%%)", config.canvas.width, config.canvas.height, m_CanvasZoom * 100.0f);
+    snprintf(sizeText, sizeof(sizeText), "%d×%d (%.0f%%)", actualCanvasWidth, actualCanvasHeight, m_CanvasZoom * 100.0f);
     float textWidth = ImGui::CalcTextSize(sizeText).x;
     float labelWidth = textWidth + 24;  // 文字宽度 + 左右边距
     
@@ -950,8 +1102,12 @@ ImVec2 PreviewPanel::ScreenToCanvas(const ImVec2& screenPos, const ProcessConfig
     ImVec2 windowPos = ImGui::GetWindowPos();
     ImVec2 windowSize = ImGui::GetWindowSize();
     
+    // ✅ 使用当前图片的实际尺寸
+    int actualCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width;
+    int actualCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height;
+    
     // ✅ 必须与 RenderCanvasStage 中的计算逻辑完全一致
-    float canvasAspect = static_cast<float>(config.canvas.width) / config.canvas.height;
+    float canvasAspect = static_cast<float>(actualCanvasWidth) / actualCanvasHeight;
     float padding = 0.0f;
     
     float maxWidth = windowSize.x - padding * 2;
@@ -972,7 +1128,7 @@ ImVec2 PreviewPanel::ScreenToCanvas(const ImVec2& screenPos, const ProcessConfig
     float canvasY = windowPos.y + (windowSize.y - canvasDisplayHeight - 40) * 0.5f + m_CanvasOffset.y;
     
     // ✅ 计算画布逻辑坐标到屏幕坐标的缩放比例
-    float scale = canvasDisplayWidth / config.canvas.width;
+    float scale = canvasDisplayWidth / actualCanvasWidth;
     
     // 转换为画布逻辑坐标
     float logicalX = (screenPos.x - canvasX) / scale;
@@ -986,8 +1142,12 @@ ImVec2 PreviewPanel::CanvasToScreen(const ImVec2& canvasPos, const ProcessConfig
     ImVec2 windowPos = ImGui::GetWindowPos();
     ImVec2 windowSize = ImGui::GetWindowSize();
     
+    // ✅ 使用当前图片的实际尺寸
+    int actualCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : config.canvas.width;
+    int actualCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : config.canvas.height;
+    
     // ✅ 必须与 RenderCanvasStage 中的计算逻辑完全一致
-    float canvasAspect = static_cast<float>(config.canvas.width) / config.canvas.height;
+    float canvasAspect = static_cast<float>(actualCanvasWidth) / actualCanvasHeight;
     float padding = 0.0f;
     
     float maxWidth = windowSize.x - padding * 2;
@@ -1008,7 +1168,7 @@ ImVec2 PreviewPanel::CanvasToScreen(const ImVec2& canvasPos, const ProcessConfig
     float canvasY = windowPos.y + (windowSize.y - canvasDisplayHeight - 40) * 0.5f + m_CanvasOffset.y;
     
     // ✅ 计算画布逻辑坐标到屏幕坐标的缩放比例
-    float scale = canvasDisplayWidth / config.canvas.width;
+    float scale = canvasDisplayWidth / actualCanvasWidth;
     
     // 转换为屏幕坐标
     float screenX = canvasX + canvasPos.x * scale;
@@ -1397,8 +1557,27 @@ void PreviewPanel::HandleTransformInput(const ImVec2& imageMin, const ImVec2& im
         
         if (m_DraggingHandle == TransformHandle::Center) {
             // 移动图片：将屏幕坐标的 delta 转换为画布逻辑坐标的 delta
-            double logicalDeltaX = static_cast<double>(delta.x) / m_CanvasZoom;
-            double logicalDeltaY = static_cast<double>(delta.y) / m_CanvasZoom;
+            // ✅ 关键修复：需要计算实际的缩放比例，而不是使用 m_CanvasZoom
+            // 因为裁剪后图片是 1:1 显示的，scale != m_CanvasZoom
+            
+            // 重新计算 scale（与 RenderCanvasStage 中的逻辑一致）
+            ImVec2 windowPos = ImGui::GetWindowPos();
+            ImVec2 windowSize = ImGui::GetWindowSize();
+            int actualCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : 800;
+            int actualCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : 600;
+            float canvasAspect = static_cast<float>(actualCanvasWidth) / actualCanvasHeight;
+            float maxWidth = windowSize.x;
+            float maxHeight = windowSize.y - 40;
+            float canvasDisplayWidth = maxWidth * m_CanvasZoom;
+            float canvasDisplayHeight = canvasDisplayWidth / canvasAspect;
+            if (canvasDisplayHeight > maxHeight * m_CanvasZoom) {
+                canvasDisplayHeight = maxHeight * m_CanvasZoom;
+                canvasDisplayWidth = canvasDisplayHeight * canvasAspect;
+            }
+            float actualScale = canvasDisplayWidth / actualCanvasWidth;
+            
+            double logicalDeltaX = static_cast<double>(delta.x) / actualScale;
+            double logicalDeltaY = static_cast<double>(delta.y) / actualScale;
             
             // ✅ PS 模型：直接平移矩形的四条边
             m_TransformRect.left = m_DragStartRect.left + logicalDeltaX;
@@ -1411,9 +1590,25 @@ void PreviewPanel::HandleTransformInput(const ImVec2& imageMin, const ImVec2& im
             // ✅ PS 核心：几何重建，而不是 scale 矩阵
             // 每一帧从初始状态 + 当前鼠标位移重新计算
             
+            // ✅ 重新计算实际的缩放比例
+            ImVec2 windowPos = ImGui::GetWindowPos();
+            ImVec2 windowSize = ImGui::GetWindowSize();
+            int actualCanvasWidth = m_CurrentImage.IsValid() ? m_CurrentImage.width : 800;
+            int actualCanvasHeight = m_CurrentImage.IsValid() ? m_CurrentImage.height : 600;
+            float canvasAspect = static_cast<float>(actualCanvasWidth) / actualCanvasHeight;
+            float maxWidth = windowSize.x;
+            float maxHeight = windowSize.y - 40;
+            float canvasDisplayWidth = maxWidth * m_CanvasZoom;
+            float canvasDisplayHeight = canvasDisplayWidth / canvasAspect;
+            if (canvasDisplayHeight > maxHeight * m_CanvasZoom) {
+                canvasDisplayHeight = maxHeight * m_CanvasZoom;
+                canvasDisplayWidth = canvasDisplayHeight * canvasAspect;
+            }
+            float actualScale = canvasDisplayWidth / actualCanvasWidth;
+            
             // 转换拖拽距离到画布逻辑坐标
-            double logicalDeltaX = static_cast<double>(delta.x) / m_CanvasZoom;
-            double logicalDeltaY = static_cast<double>(delta.y) / m_CanvasZoom;
+            double logicalDeltaX = static_cast<double>(delta.x) / actualScale;
+            double logicalDeltaY = static_cast<double>(delta.y) / actualScale;
             
             // 获取初始状态
             double T = m_DragStartRect.top;
@@ -1543,8 +1738,9 @@ void PreviewPanel::HandleTransformInput(const ImVec2& imageMin, const ImVec2& im
                 // 计算拖拽点到锚点的距离变化
                 // 屏幕坐标系中的距离
                 ImVec2 anchorScreen;
-                anchorScreen.x = (imageMin.x + imageMax.x) * 0.5f + static_cast<float>((anchorX - CenterX) * m_CanvasZoom);
-                anchorScreen.y = (imageMin.y + imageMax.y) * 0.5f + static_cast<float>((anchorY - CenterY) * m_CanvasZoom);
+                // ✅ 使用实际的 scale 而不是 m_CanvasZoom
+                anchorScreen.x = (imageMin.x + imageMax.x) * 0.5f + static_cast<float>((anchorX - CenterX) * actualScale);
+                anchorScreen.y = (imageMin.y + imageMax.y) * 0.5f + static_cast<float>((anchorY - CenterY) * actualScale);
                 
                 double startDist = sqrt(pow(m_DragStartPos.x - anchorScreen.x, 2) + pow(m_DragStartPos.y - anchorScreen.y, 2));
                 double currentDist = sqrt(pow(mousePos.x - anchorScreen.x, 2) + pow(mousePos.y - anchorScreen.y, 2));
@@ -2003,5 +2199,246 @@ void PreviewPanel::ClearCache() {
     ReleaseTexture();
     
     printf("[ClearCache] Current display state cleared (cache preserved).\n");
+}
+
+void PreviewPanel::ApplyCropToCurrentImage() {
+    // ✅ 应用裁剪到当前图片（不修改全局配置）
+    
+    if (!m_CurrentImage.IsValid() || m_CurrentImage.pixels.empty()) {
+        printf("[ApplyCrop] No valid image to crop.\n");
+        return;
+    }
+    
+    if (!m_CropTool.HasCropInfo()) {
+        printf("[ApplyCrop] No crop info available.\n");
+        return;
+    }
+    
+    // 获取裁剪信息
+    int cropOffsetX, cropOffsetY, cropWidth, cropHeight;
+    m_CropTool.GetCropInfo(cropOffsetX, cropOffsetY, cropWidth, cropHeight);
+    
+    printf("\n=== Apply Crop to Current Image ===\n");
+    printf("Original image size: %d x %d\n", m_CurrentImage.width, m_CurrentImage.height);
+    printf("Crop region: offset=(%d, %d), size=(%d x %d)\n", 
+           cropOffsetX, cropOffsetY, cropWidth, cropHeight);
+    
+    // ✅ 在执行裁剪前保存当前图像状态到历史记录
+    m_ImageHistory.Push(m_CurrentImage, "Crop Image");
+    
+    // 创建裁剪后的图像数据
+    ImageData croppedImage;
+    croppedImage.width = cropWidth;
+    croppedImage.height = cropHeight;
+    croppedImage.channels = m_CurrentImage.channels;
+    croppedImage.pixels.resize(cropWidth * cropHeight * croppedImage.channels);
+    
+    // 复制裁剪区域的像素数据
+    for (int y = 0; y < cropHeight; y++) {
+        for (int x = 0; x < cropWidth; x++) {
+            int srcX = cropOffsetX + x;
+            int srcY = cropOffsetY + y;
+            
+            // 检查源坐标是否在原图范围内
+            if (srcX >= 0 && srcX < m_CurrentImage.width && 
+                srcY >= 0 && srcY < m_CurrentImage.height) {
+                // 复制像素
+                int srcIdx = (srcY * m_CurrentImage.width + srcX) * m_CurrentImage.channels;
+                int dstIdx = (y * cropWidth + x) * croppedImage.channels;
+                
+                for (int c = 0; c < croppedImage.channels; c++) {
+                    croppedImage.pixels[dstIdx + c] = m_CurrentImage.pixels[srcIdx + c];
+                }
+            } else {
+                // 超出范围，填充透明或背景色
+                int dstIdx = (y * cropWidth + x) * croppedImage.channels;
+                for (int c = 0; c < croppedImage.channels; c++) {
+                    if (c == 3 && croppedImage.channels == 4) {
+                        croppedImage.pixels[dstIdx + c] = 0;  // Alpha = 0 (透明)
+                    } else {
+                        croppedImage.pixels[dstIdx + c] = 0;  // RGB = 0 (黑色)
+                    }
+                }
+            }
+        }
+    }
+    
+    printf("Cropped image size: %d x %d\n", croppedImage.width, croppedImage.height);
+    
+    // 更新当前图像
+    m_CurrentImage = croppedImage;
+    
+    // 更新纹理
+    if (!CreateTexture(m_CurrentImage)) {
+        printf("[ApplyCrop] Failed to update texture.\n");
+        return;
+    }
+    
+    // ✅ 标记图像为已修改并同步缓存
+    m_ImageModified = true;
+    
+    // ✅ 同步更新缓存（确保缓存与当前状态一致）
+    if (!m_CurrentImagePath.empty()) {
+        auto& cache = m_ImageCache[m_CurrentImagePath];
+        cache.imageData = m_CurrentImage;
+        cache.modified = true;
+        cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
+        printf("[ApplyCrop] Cache updated for: %s\n", m_CurrentImagePath.c_str());
+    }
+    
+    // ✅ 重置变换矩形（裁剪后图片尺寸变了，需要重新初始化）
+    m_TransformRect = TransformRect();
+    m_ValidContentBounds.Reset();
+    
+    printf("Crop applied successfully to current image only.\n");
+    printf("Transform rect reset for new image size.\n");
+    printf("===================================\n\n");
+}
+
+void PreviewPanel::ApplyTransformToCurrentImage(const ProcessConfig& config) {
+    // ✅ 应用变换到当前图片（Ctrl+T 确认时调用）
+    
+    if (!m_CurrentImage.IsValid() || m_CurrentImage.pixels.empty()) {
+        printf("[ApplyTransform] No valid image to transform.\n");
+        return;
+    }
+    
+    // 检查变换矩形是否有效
+    if (m_TransformRect.GetWidth() <= 0 || m_TransformRect.GetHeight() <= 0) {
+        printf("[ApplyTransform] Invalid transform rect.\n");
+        return;
+    }
+    
+    printf("\n=== Apply Transform to Current Image ===\n");
+    printf("Original image size: %d x %d\n", m_CurrentImage.width, m_CurrentImage.height);
+    printf("Transform rect: (%.2f, %.2f) to (%.2f, %.2f)\n", 
+           m_TransformRect.left, m_TransformRect.top, 
+           m_TransformRect.right, m_TransformRect.bottom);
+    printf("Transform size: %.2f x %.2f\n", 
+           m_TransformRect.GetWidth(), m_TransformRect.GetHeight());
+    
+    // ✅ 在执行变换前保存当前图像状态到历史记录
+    m_ImageHistory.Push(m_CurrentImage, "Transform Image");
+    
+    // 获取画布尺寸（使用当前图片的实际尺寸）
+    int canvasWidth = m_CurrentImage.width;
+    int canvasHeight = m_CurrentImage.height;
+    
+    // 创建新的图像数据（画布尺寸，RGBA 格式）
+    ImageData transformedImage;
+    transformedImage.width = canvasWidth;
+    transformedImage.height = canvasHeight;
+    transformedImage.channels = 4;  // 强制使用 RGBA 格式（支持透明）
+    transformedImage.pixels.resize(canvasWidth * canvasHeight * 4, 0);
+    
+    // 确保源图像有 Alpha 通道
+    bool srcHasAlpha = (m_CurrentImage.channels == 4);
+    
+    // 使用双线性插值重新采样图像
+    // 遍历画布上的每个像素，计算它在变换后的图像中对应的源像素位置
+    for (int dstY = 0; dstY < canvasHeight; dstY++) {
+        for (int dstX = 0; dstX < canvasWidth; dstX++) {
+            // 检查目标像素是否在变换矩形内
+            if (dstX >= m_TransformRect.left && dstX < m_TransformRect.right &&
+                dstY >= m_TransformRect.top && dstY < m_TransformRect.bottom) {
+                
+                // 计算在变换矩形内的归一化坐标 (0-1)
+                double normX = (dstX - m_TransformRect.left) / m_TransformRect.GetWidth();
+                double normY = (dstY - m_TransformRect.top) / m_TransformRect.GetHeight();
+                
+                // 映射到源图像坐标
+                double srcX = normX * m_CurrentImage.width;
+                double srcY = normY * m_CurrentImage.height;
+                
+                // 双线性插值
+                int x0 = static_cast<int>(std::floor(srcX));
+                int y0 = static_cast<int>(std::floor(srcY));
+                int x1 = std::min(x0 + 1, m_CurrentImage.width - 1);
+                int y1 = std::min(y0 + 1, m_CurrentImage.height - 1);
+                
+                // 确保坐标在范围内
+                if (x0 >= 0 && x0 < m_CurrentImage.width && 
+                    y0 >= 0 && y0 < m_CurrentImage.height) {
+                    
+                    double fx = srcX - x0;
+                    double fy = srcY - y0;
+                    
+                    // 获取四个角的像素值
+                    auto getPixel = [&](int x, int y) -> std::array<uint8_t, 4> {
+                        int idx = (y * m_CurrentImage.width + x) * m_CurrentImage.channels;
+                        std::array<uint8_t, 4> pixel = {0, 0, 0, 255};
+                        
+                        if (m_CurrentImage.channels == 4) {
+                            pixel[0] = m_CurrentImage.pixels[idx + 0];
+                            pixel[1] = m_CurrentImage.pixels[idx + 1];
+                            pixel[2] = m_CurrentImage.pixels[idx + 2];
+                            pixel[3] = m_CurrentImage.pixels[idx + 3];
+                        } else if (m_CurrentImage.channels == 3) {
+                            pixel[0] = m_CurrentImage.pixels[idx + 0];
+                            pixel[1] = m_CurrentImage.pixels[idx + 1];
+                            pixel[2] = m_CurrentImage.pixels[idx + 2];
+                            pixel[3] = 255;  // 不透明
+                        } else if (m_CurrentImage.channels == 1) {
+                            uint8_t gray = m_CurrentImage.pixels[idx];
+                            pixel[0] = gray;
+                            pixel[1] = gray;
+                            pixel[2] = gray;
+                            pixel[3] = 255;  // 不透明
+                        }
+                        
+                        return pixel;
+                    };
+                    
+                    auto p00 = getPixel(x0, y0);
+                    auto p10 = getPixel(x1, y0);
+                    auto p01 = getPixel(x0, y1);
+                    auto p11 = getPixel(x1, y1);
+                    
+                    // 双线性插值
+                    int dstIdx = (dstY * canvasWidth + dstX) * 4;
+                    for (int c = 0; c < 4; c++) {
+                        double v0 = p00[c] * (1.0 - fx) + p10[c] * fx;
+                        double v1 = p01[c] * (1.0 - fx) + p11[c] * fx;
+                        double v = v0 * (1.0 - fy) + v1 * fy;
+                        transformedImage.pixels[dstIdx + c] = static_cast<uint8_t>(std::clamp(v, 0.0, 255.0));
+                    }
+                }
+            }
+            // 变换矩形外的像素保持透明（已经初始化为 0）
+        }
+    }
+    
+    printf("Transform applied with bilinear interpolation.\n");
+    
+    // 更新当前图像
+    m_CurrentImage = transformedImage;
+    
+    // 更新纹理
+    if (!CreateTexture(m_CurrentImage)) {
+        printf("[ApplyTransform] Failed to update texture.\n");
+        return;
+    }
+    
+    // ✅ 标记图像为已修改并同步缓存
+    m_ImageModified = true;
+    
+    // ✅ 同步更新缓存（确保缓存与当前状态一致）
+    if (!m_CurrentImagePath.empty()) {
+        auto& cache = m_ImageCache[m_CurrentImagePath];
+        cache.imageData = m_CurrentImage;
+        cache.modified = true;
+        cache.history = m_ImageHistory;  // ✅ 保存历史记录
+        cache.validBounds = m_ValidContentBounds;  // ✅ 保存有效内容边界
+        printf("[ApplyTransform] Cache updated for: %s\n", m_CurrentImagePath.c_str());
+    }
+    
+    // ✅ 重置变换矩形（变换已应用，回到初始状态）
+    m_TransformRect = TransformRect();
+    m_ValidContentBounds.Reset();
+    
+    printf("Transform applied successfully to current image.\n");
+    printf("Transform rect reset to initial state.\n");
+    printf("========================================\n\n");
 }
 

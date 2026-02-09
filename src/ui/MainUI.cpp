@@ -130,8 +130,8 @@ void MainUI::Render() {
         m_NotificationTimer += ImGui::GetIO().DeltaTime;
         Logger::Debug("Notification timer: " + std::to_string(m_NotificationTimer) + "s");
         
-        // 5秒后自动关闭通知（仅对成功消息，且用户没有手动关闭的情况）
-        if (m_NotificationTimer >= 5.0f) {
+        // 10秒后自动关闭通知（延长显示时间，方便用户看到）
+        if (m_NotificationTimer >= 10.0f) {
             Logger::Info("Success notification timer expired, closing notification");
             m_ShowNotification = false;
             m_NotificationTimer = 0.0f;
@@ -151,16 +151,19 @@ void MainUI::Render() {
     // 传递工具状态给 PreviewPanel（使用引用以便双向同步）
     bool transformMode = (m_CurrentTool == ToolMode::Transform);
     bool selectionMode = (m_CurrentTool == ToolMode::Selection);
+    bool cropMode = (m_CurrentTool == ToolMode::Crop);
     
     m_PreviewPanel->Render(m_ImageList, m_CurrentImageIndex, m_ProcessConfig, m_CanvasApplied, 
-                           transformMode, selectionMode);
+                           transformMode, selectionMode, cropMode);
     
     // 同步回工具状态
-    if (transformMode && !selectionMode) {
+    if (transformMode && !selectionMode && !cropMode) {
         m_CurrentTool = ToolMode::Transform;
-    } else if (selectionMode && !transformMode) {
+    } else if (selectionMode && !transformMode && !cropMode) {
         m_CurrentTool = ToolMode::Selection;
-    } else if (!transformMode && !selectionMode) {
+    } else if (cropMode && !transformMode && !selectionMode) {
+        m_CurrentTool = ToolMode::Crop;
+    } else if (!transformMode && !selectionMode && !cropMode) {
         m_CurrentTool = ToolMode::None;
     }
     
@@ -513,6 +516,36 @@ void MainUI::RenderToolbar() {
         ImGui::Text("矩形选框工具 (M)");
         ImGui::Text("支持 Shift/Alt 修饰键");
         ImGui::Text("ESC: 取消选区");
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::EndTooltip();
+    }
+    
+    // 裁剪工具按钮 - 增大尺寸和字体
+    bool isCropActive = (m_CurrentTool == ToolMode::Crop);
+    if (isCropActive) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.6f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+    }
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);  // 增大圆角
+    ImGui::SetWindowFontScale(1.4f);  // 增大字体
+    if (ImGui::Button("C", ImVec2(60, 60))) {  // 从 44x44 增加到 60x60
+        m_CurrentTool = (m_CurrentTool == ToolMode::Crop) ? ToolMode::None : ToolMode::Crop;
+    }
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::SetWindowFontScale(1.1f);
+        ImGui::Text("裁剪工具 (C)");
+        ImGui::Text("Enter: 应用裁剪");
+        ImGui::Text("ESC: 取消裁剪");
+        ImGui::Text("方向键: 移动裁剪框");
         ImGui::SetWindowFontScale(1.0f);
         ImGui::EndTooltip();
     }
@@ -979,6 +1012,11 @@ void MainUI::ExportCurrentImage() {
             return;
         }
         
+        // ✅ 等待一小段时间，确保完成回调已经执行
+        // 这样可以避免竞态条件：IsRunning() 变为 false 后，回调可能还没执行完
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Logger::Debug("Waited for completion callback to finish");
+        
         // ✅ 显示导出结果（使用独立的对话框）
         if (exportSuccess) {
             std::string message = "文件名: " + currentImage.fileName + "\n";
@@ -1370,59 +1408,142 @@ void MainUI::RenderNotificationDialog() {
         
         Logger::Debug("RenderNotificationDialog() - Got viewport");
         
-        // 导入图片提示框显示在顶部（原位置）
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f - 250, 
-                                       viewport->WorkPos.y + 60), ImGuiCond_Always, ImVec2(0.5f, 0));
+        // 导入图片提示框显示在左侧"添加文件夹"按钮下方
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 280, 
+                                       viewport->WorkPos.y + 130), ImGuiCond_Always, ImVec2(0.0f, 0.0f));
         
-        ImGui::SetNextWindowSize(ImVec2(500, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
 
-        ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | 
-                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
-
-        std::string title = (m_NotificationType == NotificationType::Error) ? "错误" : "成功";
+        // 使用固定的窗口ID
+        std::string windowId = "##NotificationWindow";
         
-        Logger::Debug("RenderNotificationDialog() - Window title: " + title);
-        Logger::Debug("RenderNotificationDialog() - Message length: " + std::to_string(m_NotificationMessage.length()));
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
+                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize;
+        
+        Logger::Debug("RenderNotificationDialog() - Window ID: " + windowId);
+        Logger::Debug("RenderNotificationDialog() - Message: " + m_NotificationMessage);
+        
+        // 现代软件风格 - 深色卡片设计
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 16));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 10));
         
         if (m_NotificationType == NotificationType::Error) {
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.5f, 0.1f, 0.1f, 0.95f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.8f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.4f, 0.1f, 0.95f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 1.0f, 0.8f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.8f, 0.5f, 1.0f));
         }
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
 
         Logger::Debug("RenderNotificationDialog() - Colors pushed, calling ImGui::Begin()...");
         
-        if (ImGui::Begin(title.c_str(), nullptr, flags)) {
-            Logger::Debug("RenderNotificationDialog() - ImGui::Begin() succeeded");
+        ImGui::Begin(windowId.c_str(), nullptr, flags);
+        
+        Logger::Debug("RenderNotificationDialog() - ImGui::Begin() succeeded");
+        
+        // 左侧状态图标
+        ImGui::BeginGroup();
+        
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+        float radius = 28.0f;
+        ImVec2 center = ImVec2(icon_pos.x + radius, icon_pos.y + radius);
+        
+        if (m_NotificationType == NotificationType::Success) {
+            // 成功图标 - 绿色圆形 + 对勾
+            draw_list->AddCircleFilled(center, radius, IM_COL32(76, 175, 80, 80));
+            draw_list->AddCircle(center, radius, IM_COL32(102, 230, 128, 255), 0, 2.0f);
             
-            ImGui::SetWindowFontScale(1.2f);
-            Logger::Debug("RenderNotificationDialog() - About to render text...");
-            ImGui::TextWrapped("%s", m_NotificationMessage.c_str());
-            Logger::Debug("RenderNotificationDialog() - Text rendered");
-            ImGui::SetWindowFontScale(1.0f);
+            // 绘制对勾（使用线条）
+            float check_size = 12.0f;
+            ImVec2 p1 = ImVec2(center.x - check_size * 0.5f, center.y);
+            ImVec2 p2 = ImVec2(center.x - check_size * 0.2f, center.y + check_size * 0.4f);
+            ImVec2 p3 = ImVec2(center.x + check_size * 0.6f, center.y - check_size * 0.5f);
             
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.36f, 0.69f, 1.0f, 1.0f));
-            
-            if (ImGui::Button("关闭", ImVec2(200, 40))) {
-                Logger::Debug("RenderNotificationDialog() - Close button clicked");
-                m_ShowNotification = false;
-                m_NotificationTimer = 0.0f;
-            }
-            
-            ImGui::PopStyleColor(2);
-            ImGui::End();
-            Logger::Debug("RenderNotificationDialog() - ImGui::End() called");
+            draw_list->AddLine(p1, p2, IM_COL32(102, 230, 128, 255), 3.0f);
+            draw_list->AddLine(p2, p3, IM_COL32(102, 230, 128, 255), 3.0f);
         } else {
-            Logger::Error("RenderNotificationDialog() - ImGui::Begin() returned false");
+            // 错误图标 - 红色圆形 + X
+            draw_list->AddCircleFilled(center, radius, IM_COL32(200, 50, 50, 80));
+            draw_list->AddCircle(center, radius, IM_COL32(255, 100, 100, 255), 0, 2.0f);
+            
+            // 绘制X（使用线条）
+            float x_size = 12.0f;
+            ImVec2 p1 = ImVec2(center.x - x_size * 0.5f, center.y - x_size * 0.5f);
+            ImVec2 p2 = ImVec2(center.x + x_size * 0.5f, center.y + x_size * 0.5f);
+            ImVec2 p3 = ImVec2(center.x + x_size * 0.5f, center.y - x_size * 0.5f);
+            ImVec2 p4 = ImVec2(center.x - x_size * 0.5f, center.y + x_size * 0.5f);
+            
+            draw_list->AddLine(p1, p2, IM_COL32(255, 100, 100, 255), 3.0f);
+            draw_list->AddLine(p3, p4, IM_COL32(255, 100, 100, 255), 3.0f);
         }
+        
+        // 占位空间
+        ImGui::SetCursorScreenPos(ImVec2(icon_pos.x, icon_pos.y + radius * 2));
+        ImGui::Dummy(ImVec2(radius * 2, 0));
+        
+        ImGui::EndGroup();
+        
+        // 右侧内容区域
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        
+        // 标题
+        ImGui::SetWindowFontScale(1.25f);
+        if (m_NotificationType == NotificationType::Success) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+            ImGui::Text("操作成功");
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
+            ImGui::Text("操作失败");
+            ImGui::PopStyleColor();
+        }
+        ImGui::SetWindowFontScale(1.0f);
+        
+        ImGui::Spacing();
+        
+        // 消息内容
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+        ImGui::SetWindowFontScale(1.05f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 320);
+        Logger::Debug("RenderNotificationDialog() - About to render text...");
+        ImGui::TextWrapped("%s", m_NotificationMessage.c_str());
+        Logger::Debug("RenderNotificationDialog() - Text rendered");
+        ImGui::PopTextWrapPos();
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopStyleColor();
+        
+        ImGui::EndGroup();
+        
+        ImGui::Spacing();
+        ImGui::Spacing();
+        
+        // 底部关闭按钮 - 右对齐
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 90);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        
+        if (ImGui::Button("关闭", ImVec2(70, 32))) {
+            Logger::Debug("RenderNotificationDialog() - Close button clicked");
+            m_ShowNotification = false;
+            m_NotificationTimer = 0.0f;
+        }
+        
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+        
+        ImGui::End();
+        Logger::Debug("RenderNotificationDialog() - ImGui::End() called");
 
+        ImGui::PopStyleVar(4);
         ImGui::PopStyleColor(2);
         Logger::Debug("RenderNotificationDialog() - Rendering complete");
     } catch (const std::exception& e) {
@@ -1532,32 +1653,97 @@ void MainUI::RenderBatchProcessCompleteDialog() {
 
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(500, 250), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(500, 0), ImGuiCond_Appearing);
 
-        if (ImGui::BeginPopupModal("批量处理完成##Complete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            // 显示成功标志
-            ImGui::TextColored(ImVec4(0.1f, 0.8f, 0.1f, 1.0f), "[OK] 处理完成");
+        // 美化批量处理完成对话框
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.8f, 0.5f, 0.8f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+
+        if (ImGui::BeginPopupModal("批量处理完成##Complete", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+            // 成功图标 + 标题
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+            float radius = 28.0f;
+            ImVec2 icon_center = ImVec2(icon_pos.x + radius, icon_pos.y + radius);
+            
+            // 绘制成功图标
+            draw_list->AddCircleFilled(icon_center, radius, IM_COL32(76, 175, 80, 80));
+            draw_list->AddCircle(icon_center, radius, IM_COL32(102, 230, 128, 255), 0, 2.0f);
+            
+            // 绘制对勾
+            float check_size = 12.0f;
+            ImVec2 p1 = ImVec2(icon_center.x - check_size * 0.5f, icon_center.y);
+            ImVec2 p2 = ImVec2(icon_center.x - check_size * 0.2f, icon_center.y + check_size * 0.4f);
+            ImVec2 p3 = ImVec2(icon_center.x + check_size * 0.6f, icon_center.y - check_size * 0.5f);
+            draw_list->AddLine(p1, p2, IM_COL32(102, 230, 128, 255), 3.0f);
+            draw_list->AddLine(p2, p3, IM_COL32(102, 230, 128, 255), 3.0f);
+            
+            ImGui::SetCursorScreenPos(ImVec2(icon_pos.x, icon_pos.y + radius * 2));
+            ImGui::Dummy(ImVec2(radius * 2, 0));
+            
+            ImGui::SameLine();
+            
+            // 标题
+            ImGui::BeginGroup();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+            ImGui::SetWindowFontScale(1.3f);
+            ImGui::Text("批量处理完成");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
             ImGui::Separator();
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+            ImGui::Spacing();
 
             // 显示处理信息
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+            ImGui::SetWindowFontScale(1.05f);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 450);
             ImGui::TextWrapped("%s", m_BatchProcessMessage.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
+            
             ImGui::Spacing();
             ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+            ImGui::Separator();
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
 
-            // 完成按钮
-            ImVec2 buttonSize(100, 40);
-            float buttonX = (ImGui::GetWindowWidth() - buttonSize.x) / 2;
-            ImGui::SetCursorPosX(buttonX);
-
-            if (ImGui::Button("完成", buttonSize)) {
+            // 完成按钮 - 居中
+            float buttonWidth = 100.0f;
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - buttonWidth) * 0.5f);
+            
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.8f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.6f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            
+            if (ImGui::Button("完成", ImVec2(buttonWidth, 36))) {
                 m_ShowBatchProcessComplete = false;
                 m_BatchCompletePopupOpened = false;
                 ImGui::CloseCurrentPopup();
                 Logger::Debug("Batch process complete dialog closed by user");
             }
+            
+            ImGui::PopStyleColor(4);
+            ImGui::PopStyleVar();
 
             ImGui::EndPopup();
         }
+        
+        ImGui::PopStyleVar(4);
+        ImGui::PopStyleColor(2);
     } catch (const std::exception& e) {
         Logger::Error("Exception in RenderBatchProcessCompleteDialog(): " + std::string(e.what()));
     } catch (...) {
@@ -1578,50 +1764,97 @@ void MainUI::RenderExportCompleteDialog() {
 
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(550, 280), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(550, 0), ImGuiCond_Appearing);
 
-        if (ImGui::BeginPopupModal("导出完成##ExportComplete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            // 显示成功标志（更大的字体）
+        // 美化导出完成对话框
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.22f, 0.22f, 0.22f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.8f, 0.5f, 0.8f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+
+        if (ImGui::BeginPopupModal("导出完成##ExportComplete", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+            // 成功图标 + 标题
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+            float radius = 28.0f;
+            ImVec2 icon_center = ImVec2(icon_pos.x + radius, icon_pos.y + radius);
+            
+            // 绘制成功图标
+            draw_list->AddCircleFilled(icon_center, radius, IM_COL32(76, 175, 80, 80));
+            draw_list->AddCircle(icon_center, radius, IM_COL32(102, 230, 128, 255), 0, 2.0f);
+            
+            // 绘制对勾
+            float check_size = 12.0f;
+            ImVec2 p1 = ImVec2(icon_center.x - check_size * 0.5f, icon_center.y);
+            ImVec2 p2 = ImVec2(icon_center.x - check_size * 0.2f, icon_center.y + check_size * 0.4f);
+            ImVec2 p3 = ImVec2(icon_center.x + check_size * 0.6f, icon_center.y - check_size * 0.5f);
+            draw_list->AddLine(p1, p2, IM_COL32(102, 230, 128, 255), 3.0f);
+            draw_list->AddLine(p2, p3, IM_COL32(102, 230, 128, 255), 3.0f);
+            
+            ImGui::SetCursorScreenPos(ImVec2(icon_pos.x, icon_pos.y + radius * 2));
+            ImGui::Dummy(ImVec2(radius * 2, 0));
+            
+            ImGui::SameLine();
+            
+            // 标题
+            ImGui::BeginGroup();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
             ImGui::SetWindowFontScale(1.3f);
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.3f, 1.0f), "[OK] 导出成功!");
+            ImGui::Text("导出完成");
             ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
+            ImGui::EndGroup();
             
             ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
             ImGui::Separator();
+            ImGui::PopStyleColor();
             ImGui::Spacing();
             ImGui::Spacing();
 
-            // 显示导出信息（增大字体）
-            ImGui::SetWindowFontScale(1.1f);
+            // 显示导出信息
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+            ImGui::SetWindowFontScale(1.05f);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 500);
             ImGui::TextWrapped("%s", m_ExportCompleteMessage.c_str());
+            ImGui::PopTextWrapPos();
             ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
             
             ImGui::Spacing();
             ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+            ImGui::Separator();
+            ImGui::PopStyleColor();
             ImGui::Spacing();
 
-            // 完成按钮（居中，增大尺寸）
-            ImVec2 buttonSize(120, 45);
-            float buttonX = (ImGui::GetWindowWidth() - buttonSize.x) / 2;
-            ImGui::SetCursorPosX(buttonX);
+            // 完成按钮 - 居中
+            float buttonWidth = 100.0f;
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - buttonWidth) * 0.5f);
             
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.25f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.8f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.9f, 0.6f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
             
-            ImGui::SetWindowFontScale(1.15f);
-            if (ImGui::Button("完成", buttonSize)) {
+            if (ImGui::Button("完成", ImVec2(buttonWidth, 36))) {
                 m_ShowExportComplete = false;
                 m_ExportCompletePopupOpened = false;
                 ImGui::CloseCurrentPopup();
                 Logger::Debug("Export complete dialog closed by user");
             }
-            ImGui::SetWindowFontScale(1.0f);
             
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
+            ImGui::PopStyleVar();
 
             ImGui::EndPopup();
         }
+        
+        ImGui::PopStyleVar(4);
+        ImGui::PopStyleColor(2);
     } catch (const std::exception& e) {
         Logger::Error("Exception in RenderExportCompleteDialog(): " + std::string(e.what()));
     } catch (...) {
